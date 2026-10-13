@@ -1,0 +1,11 @@
+/* The desktop app's additions to the viewer page (see desktop.js); the page's own colours are reused. */
+.desk-word { font-size: 21px; font-weight: 800; letter-spacing: -.06em; line-height: 1.1; color: var(--text); }
+.desk-word span { font-weight: 600; letter-spacing: -.02em; color: var(--muted); }
+#localOpen .hint { margin: 6px 0 0; }
+#localOpen { margin: 0 0 12px; border-top: 0; padding-top: 0; }
+#deskDrop {
+	position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+	background: rgba(14, 16, 20, 0.78); border: 3px dashed var(--accent); pointer-events: none;
+	color: var(--text); font-size: 16px;
+}
+#deskDrop[hidden] { display: none; }

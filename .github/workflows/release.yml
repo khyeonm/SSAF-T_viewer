@@ -1,0 +1,81 @@
+# Installers for macOS (Apple Silicon and Intel) and Windows, published as a GitHub Release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Each platform is built on its own runner (PyInstaller does not cross-compile): the server's Python
+# environment from environment.yml, the server frozen by scripts/build_server.py, the app packaged by
+# electron-builder.  The tag's version (v0.1.0 -> 0.1.0) is written into package.json first, so the
+# installers carry it.  A tag with a hyphen (v0.1.0-rc1) makes a pre-release.  Run by hand from the
+# Actions tab (workflow_dispatch), it builds the installers as workflow artifacts without a release.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: mac, arch: arm64 }         # Apple Silicon
+          - { os: macos-15-intel, target: mac, arch: x64 }     # Intel
+          - { os: windows-latest, target: win, arch: x64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - run: npm ci
+
+      - name: Freeze the viewer server
+        run: python scripts/build_server.py
+
+      - name: Package
+        run: npx electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # no signing certificate: macOS gets an ad-hoc signature
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ssaft-viewer-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          body: |
+            **macOS**: `-mac-arm64.dmg` for Apple Silicon (M1 and later), `-mac-x64.dmg` for Intel. The app is not
+            notarized: after copying it to Applications, run once
+            `xattr -cr "/Applications/SSAF-T Viewer.app"`, then open it.
+            **Windows**: `-win-x64.exe`. Windows may say "Windows protected your PC": click More info > Run anyway.

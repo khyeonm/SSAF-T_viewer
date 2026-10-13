@@ -1,0 +1,22 @@
+# The build environment of the app, one per platform (macOS, Windows, Linux):
+#   micromamba create -f environment.yml      (or: conda env create -f environment.yml)
+#   micromamba activate ssaft-app
+# It holds the viewer server's Python packages (server/app.py imports them), PyInstaller to freeze the
+# server, and Node to run Electron and electron-builder.
+name: ssaft-app
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - zarr>=3
+  - numcodecs
+  - pyarrow
+  - tifffile
+  - shapely
+  - geopandas-base
+  - pyproj
+  - pillow
+  - pyinstaller
+  - nodejs=22

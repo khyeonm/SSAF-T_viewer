@@ -1,0 +1,2269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSAF-T store viewer</title>
+<style>
+  :root { --bg:#0e1014; --panel:#161a21; --line:#2a303b; --text:#e6e9ef; --muted:#98a1b1; --accent:#6aa8ff; }
+  html { color-scheme: dark; }
+  [hidden] { display: none !important; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #gl { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:grab; }
+  #gl.dragging { cursor:grabbing; }
+  #localGl { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:grab; background:#05070a; }
+  #localGl[hidden] { display:none; }
+  #localOpen { margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+  .localHead strong { display:block; font-size:12.5px; word-break:break-all; }
+  .localHead span { color:var(--muted); font-size:11px; }
+  .localLayer { border-top:1px solid var(--line); padding:8px 0; }
+  .localRow { display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .localRow .localName { flex:1; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .localRow small { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.04em; }
+  .localBody { padding:6px 0 2px 22px; }
+  .localCtl { display:flex; align-items:center; gap:8px; margin-top:6px; color:var(--muted); font-size:11px; }
+  .localCtl > span { width:58px; }
+  .localCtl input[type=range], .localCtl select { flex:1; }
+  .localMeta { margin:6px 0 0; color:var(--muted); font-size:11px; }
+  .localErr { margin:4px 0; color:#ff9a8f; font-size:11px; }
+  .localTypesHead { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:10px; color:var(--muted); font-size:11px; }
+  .localTypesHead button { padding:2px 8px; font-size:10px; }
+  .localTypes { max-height:240px; overflow-y:auto; margin-top:6px; }
+  .localType { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px; }
+  .localType span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .localType small { color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; }
+  .localType i { width:9px; height:9px; border-radius:2px; flex:none; }
+  .localSwatch { width:26px; height:16px; padding:0; border:1px solid var(--line); border-radius:3px; background:none; cursor:pointer; flex:none; }
+  .localFind { width:100%; margin-top:8px; }
+  #panel { position:fixed; top:12px; left:12px; bottom:12px; width:340px; max-width:calc(100% - 24px);
+    background:color-mix(in srgb,var(--panel) 94%,transparent); border:1px solid var(--line);
+    border-radius:10px; display:flex; flex-direction:column; overflow:hidden; }
+  .head { padding:10px 12px; border-bottom:1px solid var(--line); }
+  .head h1 { font-size:14px; margin:0; font-weight:600; }
+  .head .sub { color:var(--muted); font-size:11.5px; margin-top:2px; }
+  .body { overflow-y:auto; padding:4px 12px 14px; }
+  h2 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
+    margin:14px 0 6px; font-weight:600; }
+  button { background:#222834; color:var(--text); border:1px solid var(--line); border-radius:6px;
+    padding:4px 8px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#3d4656; }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  input[type=text] { width:100%; background:#0e1218; color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:5px 7px; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  select { background:#222834; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:3px 5px; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .list { border:1px solid var(--line); border-radius:8px; max-height:210px; overflow:auto; }
+  .item { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding:5px 8px;
+    border-bottom:1px solid #20262f; }
+  .item:last-child { border-bottom:0; }
+  .item .nm { font-size:12.5px; }
+  .item .meta { color:var(--muted); font-size:11px; }
+  .item.dir { cursor:pointer; }
+  .item.dir:hover, .item:hover { background:#1f2530; }
+  .layer { border:1px solid var(--line); border-radius:8px; padding:7px 8px; margin-bottom:7px; }
+  .layer .top { display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; }
+  .layer .nm { font-size:12.5px; }
+  .layer .meta { color:var(--muted); font-size:11px; margin-top:3px; }
+  .sw { width:14px; height:14px; border-radius:4px; border:1px solid #0006; display:inline-block; }
+  .cls { display:grid; grid-template-columns:16px 1fr auto; gap:7px; align-items:center; padding:2px 3px;
+    border-radius:5px; cursor:pointer; font-size:12px; }
+  .cls:hover { background:#1f2530; }
+  .cls.off { opacity:.35; }
+  .cls .pct { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .clsbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:7px 0 3px; }
+  .clsbar .meta { color:var(--muted); font-size:11px; }
+  label.ctl { display:grid; grid-template-columns:88px 1fr 46px; gap:8px; align-items:center; margin:4px 0; }
+  label.ctl span.v { text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; font-size:12px; }
+  .chk { display:flex; gap:6px; align-items:center; margin:4px 0; }
+  #status { color:var(--muted); font-size:12px; margin-top:10px; white-space:pre-wrap; }
+  #dsSelect { width:100%; }
+  .info { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin:9px 0 2px; font-size:12px; }
+  .info dt { color:var(--muted); }
+  .info dd { margin:0; overflow-wrap:anywhere; }
+  label.show { display:flex; gap:9px; align-items:center; padding:5px 2px; font-size:13.5px; cursor:pointer; }
+  label.show input { width:16px; height:16px; accent-color:var(--accent); }
+  #status.err { color:#ff8a80; }
+  .gene { display:grid; grid-template-columns:16px 14px 1fr auto; gap:7px; align-items:center; padding:3px 8px;
+    border-bottom:1px solid #20262f; cursor:pointer; font-size:12px; }
+  .gene:last-child { border-bottom:0; }
+  .gene:hover { background:#1f2530; }
+  .gene input { margin:0; accent-color:var(--accent); }
+  .gene .sw { visibility:hidden; }
+  .gene.on .sw { visibility:visible; cursor:pointer; }
+  .gene .pct { color:var(--muted); font-variant-numeric:tabular-nums; font-size:11px; }
+  .gene.sep { border-top:1px solid #39506e; }          /* under the genes that are being drawn */
+  #geneList { max-height:240px; }
+  #geneNote { color:var(--muted); font-size:11px; margin-top:4px; }
+  #toolbar { position:fixed; left:364px; bottom:12px; display:flex; gap:6px; align-items:center;
+    background:color-mix(in srgb,var(--panel) 92%,transparent); border:1px solid var(--line);
+    border-radius:8px; padding:6px 8px; }
+  #scalebar { display:flex; flex-direction:column; align-items:center; gap:3px; margin-left:8px;
+    color:var(--muted); font-size:11.5px; min-width:70px; }
+  #scalebar .bar { height:4px; background:var(--text); border-radius:2px; width:80px; }
+  #triad { position:fixed; right:14px; top:14px; width:88px; height:88px; pointer-events:none; }
+  #triad text { font:600 11px system-ui,sans-serif; }
+  #help { position:fixed; right:14px; bottom:12px; color:var(--muted); font-size:11.5px; text-align:right;
+    background:color-mix(in srgb,var(--panel) 80%,transparent); border:1px solid var(--line);
+    border-radius:8px; padding:6px 9px; max-width:380px; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="localGl" hidden></canvas>
+<div id="toolbar">
+  <button id="home" title="Back to the starting view (H)">Home</button>
+  <button id="fit" title="Fit all layers">Fit</button>
+  <button id="zin">+</button><button id="zout">&minus;</button>
+  <button id="shot">Screenshot</button>
+  <div id="scalebar"><div class="bar" id="sbBar"></div><span id="sbLabel"></span></div>
+</div>
+<svg id="triad" viewBox="0 0 88 88"></svg>
+<div id="help">drag: rotate around the point you grabbed &middot; middle / right / shift-drag: pan &middot; wheel: zoom<br>
+H: home &middot; arrows: rotate (shift: pan) &middot; + &minus;: zoom</div>
+
+<aside id="panel">
+  <div class="head">
+    <h1>SSAF-T store viewer</h1>
+    <div class="sub" id="sub">open a zarr store, pick what to render</div>
+  </div>
+  <div class="body">
+    <div id="catalogSection" hidden>
+    <h2>Dataset</h2>
+    <select id="dsSelect"></select>
+    <dl id="dsInfo" class="info"></dl>
+    <h2>Show</h2>
+    <div id="dsShow"></div>
+    <div id="localOpen">
+      <h2>Your own data</h2>
+      <div class="row"><button id="openLocal">Open a .zarr folder…</button></div>
+      <input type="file" id="localFiles" webkitdirectory directory multiple hidden>
+      <p class="hint" id="localHint">A SpatialData store on your computer, read in your browser: nothing is uploaded and this server never sees it. A store served over HTTP opens with <code>?local=&lt;url&gt;</code>.</p>
+    </div>
+    </div>
+    <div id="localSection" hidden>
+      <div class="row" style="margin-bottom:8px"><button id="localBack">&larr; Back to the datasets</button></div>
+      <div id="localPanel"></div>
+    </div>
+
+    <div id="storeSection">
+    <h2>Store</h2>
+    <input type="text" id="path" spellcheck="false" placeholder="/path/to/store.zarr or a directory">
+    <div class="row" style="margin:6px 0">
+      <button id="open">Open</button><button id="up">Up</button>
+      <span id="where" class="meta" style="color:var(--muted);font-size:11px"></span>
+    </div>
+    <div class="list" id="browser"></div>
+
+    <h2>Elements</h2>
+    <div class="row" style="margin-bottom:6px">
+      <label>detail <select id="stride"><option value="1">full</option><option value="2">1/2</option><option value="4" selected>1/4</option><option value="8">1/8</option></select></label>
+      <span style="color:var(--muted);font-size:11px">coarser = faster to load</span>
+    </div>
+    <div class="list" id="elements"></div>
+    </div>
+
+    <div id="tifSection">
+    <h2>Nuclei from an image stack</h2>
+    <input type="text" id="tifPath" spellcheck="false" placeholder="/path/to/morphology.ome.tif">
+    <div class="row" style="margin:6px 0">
+      <label>level <select id="tifLevel"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option></select></label>
+      <label>z step <input type="text" id="tifZ" value="3.0" style="width:50px"></label>
+      <button id="addTif">Add as layer</button>
+    </div>
+    </div>
+
+    <h2 id="layersHead">Layers</h2>
+    <div id="layers"></div>
+
+    <div id="geneSection" hidden>
+    <h2>Gene expression</h2>
+    <input type="text" id="geneFind" spellcheck="false" placeholder="find a gene">
+    <div class="clsbar"><span class="meta" id="geneCount"></span><span class="row"><button id="geneHvg"></button><button id="geneAll" title="Show or hide every gene in the list below"></button></span></div>
+    <div class="list" id="geneList"></div>
+    <label class="ctl" id="geneSizeRow">point size<input id="geneSize" type="range" min="1" max="12" step="0.5" value="3"><span class="v" id="geneSizeV"></span></label>
+    <label class="ctl" id="geneGainRow" hidden>brightness<input id="geneGain" type="range" min="1" max="20" step="0.5" value="3"><span class="v" id="geneGainV"></span></label>
+    <label class="ctl">opacity<input id="geneAlpha" type="range" min="10" max="100" value="100"><span class="v" id="geneAlphaV"></span></label>
+    <div class="chk"><input type="checkbox" id="genePlane"><label for="genePlane" title="A section is usually tilted, and a transcript sits at one depth: a single plane holds only a few percent of them, over part of the tissue">2D slice: only the transcripts of that z plane</label></div>
+    <div id="geneNote"></div>
+    </div>
+
+    <div id="viewSection">
+    <h2>View</h2>
+    <div class="row" style="margin-bottom:6px">
+      <button id="m3d" class="on" title="The volume, rotatable">3D</button>
+      <button id="m2d" title="One z plane seen straight down, every pixel drawn as it is">2D slice</button>
+    </div>
+    <div id="ctl3d">
+    <div class="row">
+      <button data-view="top">Top</button><button data-view="oblique">Oblique</button>
+      <button data-view="side">Side</button><button data-view="reset">Reset</button>
+      <button id="scale1">1:1 z</button>
+    </div>
+    <label class="ctl">z exaggeration<input id="zscale" type="range" min="1" max="40" step="1" value="1"><span class="v" id="zscaleV"></span></label>
+    <div class="chk"><input type="checkbox" id="orbitCursor"><label for="orbitCursor">Rotate around the point under the cursor</label></div>
+    </div>
+    <div id="ctl2d" hidden>
+    <label class="ctl" id="zRow">z plane<input id="zplane" type="range" min="0" max="0" step="1" value="0"><span class="v" id="zplaneV"></span></label>
+    <div id="zInfo" style="color:var(--muted);font-size:11px;margin:2px 0 4px"></div>
+    </div>
+    <div class="chk"><input type="checkbox" id="shotScale" checked><label for="shotScale">Scale bar in the screenshot</label></div>
+    <div class="chk"><input type="checkbox" id="light"><label for="light">Light background</label></div>
+    <div id="status"></div>
+    </div>
+  </div>
+</aside>
+
+<script>
+"use strict";
+// private viewers: the access token arrives once on the shared link; it is kept for this tab, taken out of
+// the address bar, and sent with every request, so the viewer works even where cookies are withheld
+(()=>{ const u=new URL(location.href); let t=u.searchParams.get("t");
+  try{ if(t) sessionStorage.setItem("ssaft_t",t); else t=sessionStorage.getItem("ssaft_t"); }catch(_){}
+  // take the token out of the address bar only once the page has loaded: rewriting the URL while the
+  // first requests start can abort them
+  if(u.searchParams.has("t")) addEventListener("load",()=>{ const v=new URL(location.href); v.searchParams.delete("t");
+    history.replaceState(history.state,"",v.pathname+v.search+v.hash); },{once:true});
+  // every request carries the token (when there is one) and is retried on a network error: a page opened
+  // from a link on another site can have its first requests cancelled by the browser
+  const f=window.fetch.bind(window);
+  window.fetch=async(input,init={})=>{
+    const hd=new Headers(init.headers||{}); if(t) hd.set("X-SSAF-T",t);
+    for(let i=0;;i++){
+      try{ return await f(input,{...init,headers:hd}); }
+      catch(e){ if(i>=3||(init.signal&&init.signal.aborted)) throw e; await new Promise((ok)=>setTimeout(ok,250*(i+1))); } } };
+})();
+const $ = (s) => document.querySelector(s);
+const statusEl = $("#status");
+const setStatus = (m, err) => { statusEl.textContent = m; statusEl.classList.toggle("err", !!err); };
+window.addEventListener("error", (e) => setStatus("Error: " + e.message, true));
+window.addEventListener("unhandledrejection", (e) => setStatus("Error: " + (e.reason?.message || e.reason), true));
+
+const canvas = $("#gl");
+const gl = canvas.getContext("webgl2", { antialias: false });
+if (!gl) { withoutWebGL(); throw new Error("no webgl2"); }
+
+/**
+ * What is left when the browser has no WebGL2.
+ *
+ * The published datasets cannot be drawn — they are volumes, and the whole renderer below is
+ * WebGL — but a store of the visitor's own is read in the browser and drawn on a plain 2D canvas,
+ * which every browser has.  So the page keeps that one thing and says why the rest is missing.
+ * Everything after this runs only when there IS a context, hence the throw above.
+ */
+function withoutWebGL(){
+  const params=new URLSearchParams(location.search);
+  for(const id of ["#storeSection","#tifSection","#catalogSection","#viewSection","#layersHead","#layers","#toolbar","#triad","#help"])
+    { const n=$(id); if(n) n.hidden=true; }
+  $("#panel h1").textContent="SSAF-T Cell-Type Map";
+  $("#sub").textContent="your own data";
+  const open=$("#localOpen"), section=$("#localSection");
+  open.hidden=false; document.querySelector("#panel .body").prepend(open);
+  $("#localHint").textContent="This browser has no WebGL2, so the published datasets cannot be drawn here \u2014 "+
+    "they are volumes. A store of your own is read in your browser and drawn on a plain canvas, which works.";
+  let live=null;
+  const start=async(make)=>{
+    try{
+      if(live){ live.close(); live=null; }
+      const source=await make();
+      if(!source) return;
+      $("#localGl").hidden=false; $("#gl").hidden=true;
+      open.hidden=true; section.hidden=false;
+      const [{openLocal}] = await Promise.all([import("./local/viewer.js")]);
+      live=await openLocal({ source, canvas:$("#localGl"), panel:$("#localPanel"), status:(m)=>setStatus(m) });
+    }catch(e){ setStatus(e&&e.message?e.message:String(e),true); }
+  };
+  $("#openLocal").onclick=async()=>{
+    const {pickFolderSource}=await import("./local/open.js");
+    start(()=>pickFolderSource({ input:$("#localFiles"), force:!!params.get("fileinput"), status:setStatus }));
+  };
+  $("#localBack").onclick=()=>{
+    if(live){ live.close(); live=null; }
+    $("#localGl").hidden=true; section.hidden=true; open.hidden=false;
+    setStatus("open a store of your own");
+  };
+  $("#localBack").textContent="\u2190 Close";
+  if(params.get("local")){
+    import("./local/open.js").then(({sourceForUrl})=>start(()=>sourceForUrl(params.get("local"))));
+  } else setStatus("open a store of your own");
+}
+const GPU_OOM="The browser ran out of GPU memory, so part of the view could not be drawn. Switch some layers off (each one gives its memory back) or reload the page.";
+canvas.addEventListener("webglcontextlost",(e)=>{ e.preventDefault(); setStatus(GPU_OOM,true); });
+function gpuCheck(){ if(gl.getError()===gl.OUT_OF_MEMORY) setStatus(GPU_OOM,true); }
+
+// ---------------------------------------------------------------- math
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const scl=(a,s)=>[a[0]*s,a[1]*s,a[2]*s], dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm=(a)=>{const l=Math.hypot(...a)||1;return [a[0]/l,a[1]/l,a[2]/l];};
+function perspective(f,asp,n,fa){const t=1/Math.tan(f/2),nf=1/(n-fa);
+  return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(fa+n)*nf,-1, 0,0,2*fa*n*nf,0]);}
+function lookAt(e,c,u){const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
+  return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x,e),-dot(y,e),-dot(z,e),1]);}
+function mul(a,b){const o=new Float32Array(16);
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s;}return o;}
+const hexRGB=(h)=>{const n=parseInt(h.slice(1),16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];};
+
+// ---------------------------------------------------------------- shaders
+const VS = `#version 300 es
+layout(location=0) in vec3 aPos;
+uniform mat4 uViewProj; uniform vec3 uBoxMin, uBoxMax;
+out vec3 vWorld;
+void main(){ vec3 w = mix(uBoxMin,uBoxMax,aPos); vWorld=w; gl_Position=uViewProj*vec4(w,1.0); }`;
+
+// label volume: first visible voxel along the ray, flat-shaded per face, palette by id
+const FS_LABEL = `#version 300 es
+precision highp float; precision highp int; precision highp usampler2DArray; precision highp sampler2D;
+uniform usampler2DArray uVol; uniform sampler2D uPal;
+uniform mat4 uViewProj; uniform vec3 uCam,uA,uB,uBmin,uBmax,uLight;
+uniform float uAlpha; uniform int uOutline;
+in vec3 vWorld; out vec4 outColor;
+uint idAt(ivec3 c){ return texelFetch(uVol,c,0).r; }
+bool shown(uint id){ return id!=0u && texelFetch(uPal,ivec2(int(id),0),0).a>0.5; }
+void main(){
+  vec3 dw=normalize(vWorld-uCam), ro=uA*uCam+uB, rd=uA*dw;
+  vec3 rds=vec3(abs(rd.x)<1e-12?1e-12:rd.x, abs(rd.y)<1e-12?1e-12:rd.y, abs(rd.z)<1e-12?1e-12:rd.z);
+  vec3 inv=1.0/rds, t0=(uBmin-ro)*inv, t1=(uBmax-ro)*inv, tsm=min(t0,t1), tbg=max(t0,t1);
+  float tn=max(max(tsm.x,tsm.y),tsm.z), tf=min(min(tbg.x,tbg.y),tbg.z);
+  int axis = (tsm.x>=tsm.y)?((tsm.x>=tsm.z)?0:2):((tsm.y>=tsm.z)?1:2);
+  if(tn<0.0){tn=0.0;axis=-1;}
+  if(tn>=tf) discard;
+  ivec3 tsz=textureSize(uVol,0);
+  ivec3 lo=max(ivec3(floor(uBmin)),ivec3(0)), hi=min(ivec3(ceil(uBmax))-1,tsz-1);
+  ivec3 stp=ivec3(sign(rds)); vec3 tD=abs(inv), pd=vec3(greaterThan(rds,vec3(0.0)));
+  float t=tn; bool hit=false; uint hid=0u; ivec3 hc=ivec3(0);
+  vec3 p=ro+rds*(tn+1e-4);
+  ivec3 c=clamp(ivec3(floor(p)),lo,hi);
+  vec3 tMax=(vec3(c)+pd-ro)*inv;
+  for(int i=0;i<1400;i++){
+    uint id=idAt(c);
+    if(shown(id)){hit=true;hid=id;hc=c;break;}
+    if(tMax.x<tMax.y){ if(tMax.x<tMax.z){c.x+=stp.x;t=tMax.x;tMax.x+=tD.x;axis=0;} else {c.z+=stp.z;t=tMax.z;tMax.z+=tD.z;axis=2;} }
+    else { if(tMax.y<tMax.z){c.y+=stp.y;t=tMax.y;tMax.y+=tD.y;axis=1;} else {c.z+=stp.z;t=tMax.z;tMax.z+=tD.z;axis=2;} }
+    if(t>=tf || any(lessThan(c,lo)) || any(greaterThan(c,hi))) break;
+  }
+  if(!hit) discard;
+  vec3 base=texelFetch(uPal,ivec2(int(hid),0),0).rgb;
+  vec3 n=-dw;
+  if(axis>=0){ vec3 nt=vec3(0.0); nt[axis]=-float(stp[axis]); n=normalize(nt*sign(uA)); }
+  float diff=max(dot(n,uLight),0.0);
+  vec3 col=base*(0.40+0.60*diff);
+  if(uOutline==1 && axis>=0){
+    int a1=(axis==0)?1:0, a2=(axis==2)?1:2;
+    vec3 hp=ro+rds*t;
+    float u=hp[a1]-float(hc[a1]), v=hp[a2]-float(hc[a2]);
+    float w1=1.1*t*abs(uA[a1])*0.002, w2=1.1*t*abs(uA[a2])*0.002;
+    float d=0.0;
+    ivec3 e1=ivec3(0); e1[a1]=1; ivec3 e2=ivec3(0); e2[a2]=1;
+    if(w1<0.3){ ivec3 q=hc-e1; if(u<w1 && all(greaterThanEqual(q,ivec3(0))) && idAt(q)!=hid) d=1.0;
+                q=hc+e1; if(u>1.0-w1 && all(lessThan(q,tsz)) && idAt(q)!=hid) d=1.0; }
+    if(w2<0.3){ ivec3 q=hc-e2; if(v<w2 && all(greaterThanEqual(q,ivec3(0))) && idAt(q)!=hid) d=1.0;
+                q=hc+e2; if(v>1.0-w2 && all(lessThan(q,tsz)) && idAt(q)!=hid) d=1.0; }
+    col*=1.0-0.55*d;
+  }
+  vec4 cp=uViewProj*vec4(uCam+dw*t,1.0);
+  gl_FragDepth=clamp((cp.z/cp.w)*0.5+0.5,0.0,1.0);
+  outColor=vec4(col,uAlpha);
+}`;
+
+// intensity volume: iso-surface, normal from the gradient (nuclei from a morphology stack)
+const FS_ISO = `#version 300 es
+precision highp float; precision highp sampler2DArray;
+uniform sampler2DArray uVol;
+uniform mat4 uViewProj; uniform vec3 uCam,uA,uB,uBmin,uBmax,uColor,uLight;
+uniform float uIso,uAlpha;
+in vec3 vWorld; out vec4 outColor;
+float sampleV(vec3 p){
+  vec3 sz=vec3(textureSize(uVol,0)); vec2 uv=p.xy/sz.xy;
+  float z=clamp(p.z-0.5,0.0,sz.z-1.0), z0=floor(z);
+  float a=texture(uVol,vec3(uv,z0)).r, b=texture(uVol,vec3(uv,min(z0+1.0,sz.z-1.0))).r;
+  return mix(a,b,z-z0);
+}
+void main(){
+  vec3 dw=normalize(vWorld-uCam), ro=uA*uCam+uB, rd=uA*dw;
+  vec3 rds=vec3(abs(rd.x)<1e-12?1e-12:rd.x, abs(rd.y)<1e-12?1e-12:rd.y, abs(rd.z)<1e-12?1e-12:rd.z);
+  vec3 inv=1.0/rds, t0=(uBmin-ro)*inv, t1=(uBmax-ro)*inv, tsm=min(t0,t1), tbg=max(t0,t1);
+  float tn=max(max(tsm.x,tsm.y),max(tsm.z,0.0)), tf=min(min(tbg.x,tbg.y),tbg.z);
+  if(tn>=tf) discard;
+  float stp=0.7/max(max(abs(rds.x),abs(rds.y)),abs(rds.z));
+  float t=tn, prev=tn; bool hit=false;
+  for(int i=0;i<900;i++){
+    if(t>=tf) break;
+    if(sampleV(ro+rds*t)>=uIso){
+      float lo=prev,hi=t;
+      for(int k=0;k<5;k++){ float m=0.5*(lo+hi); if(sampleV(ro+rds*m)>=uIso) hi=m; else lo=m; }
+      t=hi; hit=true; break;
+    }
+    prev=t; t+=stp;
+  }
+  if(!hit) discard;
+  vec3 p=ro+rds*t;
+  vec3 g=vec3(sampleV(p+vec3(1,0,0))-sampleV(p-vec3(1,0,0)),
+              sampleV(p+vec3(0,1,0))-sampleV(p-vec3(0,1,0)),
+              sampleV(p+vec3(0,0,1))-sampleV(p-vec3(0,0,1)));
+  vec3 n=-normalize(g*uA+vec3(1e-9));
+  float diff=max(dot(n,uLight),0.0);
+  float rim=pow(1.0-max(dot(n,-dw),0.0),2.5);
+  vec3 col=uColor*(0.30+0.62*diff)+0.14*rim;
+  vec4 cp=uViewProj*vec4(uCam+dw*t,1.0);
+  gl_FragDepth=clamp((cp.z/cp.w)*0.5+0.5,0.0,1.0);
+  outColor=vec4(col,uAlpha);
+}`;
+
+// solid surface: an iso-surface through ONE cell type's smoothed occupancy (0..1), built by the
+// server.  Labels cannot be interpolated, occupancy can, so the surface is curved and carries a
+// real normal.  Blocks whose maximum never reaches the threshold are skipped in one step.
+const FS_SOLID = `#version 300 es
+precision highp float; precision highp sampler2DArray; precision highp sampler2D;
+uniform sampler2DArray uVol; uniform sampler2D uBlk;
+uniform mat4 uViewProj; uniform vec3 uCam,uA,uB,uBmin,uBmax,uColor,uLight;
+uniform float uIso,uAlpha; uniform int uBS;
+in vec3 vWorld; out vec4 outColor;
+float sampleV(vec3 p){
+  vec3 sz=vec3(textureSize(uVol,0)); vec2 uv=p.xy/sz.xy;
+  float z=clamp(p.z-0.5,0.0,sz.z-1.0), z0=floor(z);
+  float a=texture(uVol,vec3(uv,z0)).r, b=texture(uVol,vec3(uv,min(z0+1.0,sz.z-1.0))).r;
+  return mix(a,b,z-z0);
+}
+void main(){
+  vec3 dw=normalize(vWorld-uCam), ro=uA*uCam+uB, rd=uA*dw;
+  vec3 rds=vec3(abs(rd.x)<1e-12?1e-12:rd.x, abs(rd.y)<1e-12?1e-12:rd.y, abs(rd.z)<1e-12?1e-12:rd.z);
+  vec3 inv=1.0/rds, t0=(uBmin-ro)*inv, t1=(uBmax-ro)*inv, tsm=min(t0,t1), tbg=max(t0,t1);
+  float tn=max(max(tsm.x,tsm.y),max(tsm.z,0.0)), tf=min(min(tbg.x,tbg.y),tbg.z);
+  if(tn>=tf) discard;
+  float stp=0.7/max(max(abs(rds.x),abs(rds.y)),abs(rds.z));
+  float t=tn, prevT=tn; bool hit=false;
+  for(int i=0;i<640;i++){
+    if(t>=tf) break;
+    vec3 p=ro+rds*t;
+    ivec2 blk=ivec2(max(floor(p.xy),vec2(0.0)))/uBS;
+    if(texelFetch(uBlk,blk,0).r<uIso){
+      vec3 bmn=vec3(vec2(blk*uBS),uBmin.z), bmx=vec3(vec2((blk+1)*uBS),uBmax.z);
+      vec3 eb=max((bmn-ro)*inv,(bmx-ro)*inv);
+      t=max(min(min(eb.x,eb.y),eb.z),t+stp*0.5); prevT=t; continue;
+    }
+    if(sampleV(p)>=uIso){
+      float lo=prevT,hi=t;
+      for(int k=0;k<5;k++){ float m=0.5*(lo+hi); if(sampleV(ro+rds*m)>=uIso) hi=m; else lo=m; }
+      t=hi; hit=true; break;
+    }
+    prevT=t; t+=stp;
+  }
+  if(!hit) discard;
+  vec3 p=ro+rds*t, n;
+  vec3 g=vec3(sampleV(p+vec3(1,0,0))-sampleV(p-vec3(1,0,0)),
+              sampleV(p+vec3(0,1,0))-sampleV(p-vec3(0,1,0)),
+              sampleV(p+vec3(0,0,1))-sampleV(p-vec3(0,0,1)));
+  vec3 ng=-normalize(g*uA+vec3(1e-9));
+  // where the surface is cut by the volume's own box — the whole top of a 2D map, a one-plane slab —
+  // the gradient runs sideways and alone would shade the top dark; the box face is the normal there,
+  // tilted a little by the gradient so the smoothed relief still reads
+  float tface=max(max(tsm.x,tsm.y),tsm.z);
+  if(tface>=0.0 && t<=tface+1e-3){
+    int axis=(tsm.x>=tsm.y)?((tsm.x>=tsm.z)?0:2):((tsm.y>=tsm.z)?1:2);
+    vec3 nt=vec3(0.0); nt[axis]=-sign(rds[axis]);
+    n=normalize(normalize(nt*sign(uA))+0.45*ng);
+  } else {
+    n=ng;
+  }
+  float diff=max(dot(n,uLight),0.0), rim=pow(1.0-max(dot(n,-dw),0.0),2.5);
+  // the voxel view's lighting (0.40 + 0.60 diffuse), and a rim that tints instead of greying
+  vec3 col=uColor*(0.40+0.60*diff+0.12*rim);
+  vec4 cp=uViewProj*vec4(uCam+dw*t,1.0);
+  gl_FragDepth=clamp((cp.z/cp.w)*0.5+0.5,0.0,1.0);
+  outColor=vec4(col,uAlpha);
+}`;
+
+// full-resolution label layer: one draw per tile, voxel DDA that jumps over 16x16 xy blocks
+// holding no visible class (a bitmask per block), so a ray can cross 2048 um of empty lattice
+// in a few dozen steps.  Ported from the DMD viewer, where it carries a 1 um map of 6.6 x 6.4 mm.
+const FS_TILED = `#version 300 es
+precision highp float; precision highp int;
+precision highp usampler2DArray; precision highp usampler2D; precision highp sampler2D;
+uniform usampler2DArray uVol; uniform usampler2D uOcc; uniform sampler2D uPal;
+uniform mat4 uViewProj; uniform vec3 uCam,uA,uB,uBmin,uBmax,uLight;
+uniform uvec2 uVis; uniform int uBS; uniform float uPixScale,uAlpha; uniform int uOutline;
+in vec3 vWorld; out vec4 outColor;
+uint idAt(ivec3 c){ return texelFetch(uVol,c,0).r; }
+bool shown(uint id){ return id!=0u && texelFetch(uPal,ivec2(int(id),0),0).a>0.5; }
+void main(){
+  vec3 dw=normalize(vWorld-uCam), ro=uA*uCam+uB, rd=uA*dw;
+  vec3 rds=vec3(abs(rd.x)<1e-12?1e-12:rd.x, abs(rd.y)<1e-12?1e-12:rd.y, abs(rd.z)<1e-12?1e-12:rd.z);
+  vec3 inv=1.0/rds, t0=(uBmin-ro)*inv, t1=(uBmax-ro)*inv, tsm=min(t0,t1), tbg=max(t0,t1);
+  float tn=max(max(tsm.x,tsm.y),tsm.z), tf=min(min(tbg.x,tbg.y),tbg.z);
+  int axis=(tsm.x>=tsm.y)?((tsm.x>=tsm.z)?0:2):((tsm.y>=tsm.z)?1:2);
+  if(tn<0.0){tn=0.0;axis=-1;}
+  if(tn>=tf) discard;
+  ivec3 tsz=textureSize(uVol,0);
+  ivec3 lo=max(ivec3(floor(uBmin)),ivec3(0)), hi=min(ivec3(ceil(uBmax))-1,tsz-1);
+  ivec3 stp=ivec3(sign(rds)); vec3 tDelta=abs(inv), posDir=vec3(greaterThan(rds,vec3(0.0)));
+  float t=tn; bool hit=false; uint hid=0u; ivec3 hc=ivec3(0);
+  // translucent: every cell the ray enters adds its shaded colour at uAlpha, front to back, so the
+  // cells behind show through the ones in front (instead of the first cell fading into the background)
+  bool glass=uAlpha<0.999; vec3 accC=vec3(0.0); float accA=0.0, tFirst=-1.0; uint prev=0u; bool full=false;
+  for(int outer=0;outer<512;outer++){
+    if(t>=tf) break;
+    float eps=1e-4+t*4e-6;
+    vec3 p=ro+rds*(t+eps);
+    ivec3 c=clamp(ivec3(floor(p)),lo,hi);
+    ivec2 blk=c.xy/uBS;
+    uvec2 occ=texelFetch(uOcc,blk,0).rg;
+    if(((occ.r&uVis.x)|(occ.g&uVis.y))==0u){
+      vec3 bmn=vec3(vec2(blk*uBS),float(lo.z)), bmx=vec3(vec2((blk+1)*uBS),float(hi.z+1));
+      vec3 eb=max((bmn-ro)*inv,(bmx-ro)*inv);
+      float tExit=min(min(eb.x,eb.y),eb.z);
+      axis=(eb.x<=eb.y)?((eb.x<=eb.z)?0:2):((eb.y<=eb.z)?1:2);
+      t=max(tExit,t+eps); prev=0u; continue;
+    }
+    ivec3 blo=max(ivec3(blk*uBS,lo.z),lo), bhi=min(ivec3((blk+1)*uBS-1,hi.z),hi);
+    vec3 tMax=(vec3(c)+posDir-ro)*inv;
+    for(int i=0;i<72;i++){
+      uint id=idAt(c);
+      if(shown(id)&&!glass){hit=true;hid=id;hc=c;break;}
+      if(glass&&shown(id)&&id!=prev){
+        vec3 nT=-dw; if(axis>=0){ vec3 a=vec3(0.0); a[axis]=-float(stp[axis]); nT=normalize(a*sign(uA)); }
+        vec3 cc=texelFetch(uPal,ivec2(int(id),0),0).rgb*(0.40+0.60*max(dot(nT,uLight),0.0));
+        if(tFirst<0.0) tFirst=t;
+        accC+=(1.0-accA)*uAlpha*cc; accA+=(1.0-accA)*uAlpha;
+        if(accA>0.97){full=true;break;}
+      }
+      prev=id;
+      if(tMax.x<tMax.y){ if(tMax.x<tMax.z){c.x+=stp.x;t=tMax.x;tMax.x+=tDelta.x;axis=0;} else {c.z+=stp.z;t=tMax.z;tMax.z+=tDelta.z;axis=2;} }
+      else { if(tMax.y<tMax.z){c.y+=stp.y;t=tMax.y;tMax.y+=tDelta.y;axis=1;} else {c.z+=stp.z;t=tMax.z;tMax.z+=tDelta.z;axis=2;} }
+      if(t>=tf || any(lessThan(c,blo)) || any(greaterThan(c,bhi))) break;
+    }
+    if(hit||full) break;
+  }
+  if(glass){
+    if(accA<=0.0) discard;
+    vec4 cq=uViewProj*vec4(uCam+dw*tFirst,1.0);
+    gl_FragDepth=clamp((cq.z/cq.w)*0.5+0.5,0.0,1.0);
+    outColor=vec4(accC/accA,accA); return;
+  }
+  if(!hit) discard;
+  vec4 cp=uViewProj*vec4(uCam+dw*t,1.0);
+  gl_FragDepth=clamp((cp.z/cp.w)*0.5+0.5,0.0,1.0);
+  vec3 base=texelFetch(uPal,ivec2(int(hid),0),0).rgb, nW=-dw;
+  if(axis>=0){ vec3 nT=vec3(0.0); nT[axis]=-float(stp[axis]); nW=normalize(nT*sign(uA)); }
+  vec3 col=base*(0.40+0.60*max(dot(nW,uLight),0.0));
+  if(uOutline==1 && axis>=0){
+    int a1=(axis==0)?1:0, a2=(axis==2)?1:2;
+    vec3 hp=ro+rds*t;
+    float u=hp[a1]-float(hc[a1]), v=hp[a2]-float(hc[a2]);
+    float w1=1.1*t*uPixScale*abs(uA[a1]), w2=1.1*t*uPixScale*abs(uA[a2]);
+    ivec3 e1=ivec3(0); e1[a1]=1; ivec3 e2=ivec3(0); e2[a2]=1;
+    float dark=0.0;
+    if(w1<0.3){ ivec3 q=hc-e1; if(u<w1 && all(greaterThanEqual(q,ivec3(0))) && idAt(q)!=hid) dark=1.0;
+                q=hc+e1; if(u>1.0-w1 && all(lessThan(q,tsz)) && idAt(q)!=hid) dark=1.0; }
+    if(w2<0.3){ ivec3 q=hc-e2; if(v<w2 && all(greaterThanEqual(q,ivec3(0))) && idAt(q)!=hid) dark=1.0;
+                q=hc+e2; if(v>1.0-w2 && all(lessThan(q,tsz)) && idAt(q)!=hid) dark=1.0; }
+    col*=1.0-0.6*dark;
+  }
+  outColor=vec4(col,uAlpha);
+}`;
+
+// colour image (H&E) in 3D: a flat textured sheet at the top of its slab, one quad per tile
+const FS_IMG = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uImg; uniform vec3 uBoxMin,uBoxMax; uniform vec4 uUV; uniform float uAlpha; uniform int uKey;
+in vec3 vWorld; out vec4 outColor;
+void main(){
+  vec2 t=vec2((vWorld.x-uBoxMin.x)/(uBoxMax.x-uBoxMin.x), (uBoxMax.y-vWorld.y)/(uBoxMax.y-uBoxMin.y));
+  vec3 c=texture(uImg,mix(uUV.xy,uUV.zw,t)).rgb;
+  float a=uAlpha;
+  // slide background is light and grey (min channel ~0.85-0.93, saturation ~0.01); stain is saturated
+  // (> 0.12) or dark, so either one keeps a pixel.  Fluorescence is the reverse: bright on black.
+  float mx=max(c.r,max(c.g,c.b)), mn=min(c.r,min(c.g,c.b));
+  if(uKey==1) a*=clamp(max((mx-mn-0.04)/0.08,(0.78-mn)/0.2),0.0,1.0);
+  else if(uKey==2) a*=clamp((mx-0.04)/0.10,0.0,1.0);
+  if(a<0.01) discard;
+  outColor=vec4(c,a);
+}`;
+
+// ---- 2D slice: each layer's plane at the chosen z, straight down, orthographic.  The quad is the
+// layer's µm rectangle; the fragment turns its µm position back into a texel, so a label voxel is
+// exactly one square of its own size on screen and nothing is interpolated that should not be.
+const VS2 = `#version 300 es
+layout(location=0) in vec3 aPos;
+uniform vec4 uRect; uniform vec3 uView; uniform vec2 uCanvas;
+out vec2 vUm;
+void main(){ vec2 w=mix(uRect.xy,uRect.zw,aPos.xy); vUm=w;
+  vec2 n=(w-uView.xy)/(uView.z*0.5*uCanvas); gl_Position=vec4(n.x,-n.y,0.0,1.0); }`;
+const FS2_LABEL = `#version 300 es
+precision highp float; precision highp int; precision highp usampler2DArray; precision highp sampler2D;
+uniform usampler2DArray uVol; uniform sampler2D uPal;
+uniform vec2 uOrg,uVox; uniform int uPlane; uniform float uAlpha;
+in vec2 vUm; out vec4 outColor;
+uint idAt(ivec2 c){ return texelFetch(uVol,ivec3(c,uPlane),0).r; }
+void main(){
+  vec2 p=(vUm-uOrg)/uVox, w=fwidth(p);
+  ivec2 sz=textureSize(uVol,0).xy, c=ivec2(floor(p));
+  if(any(lessThan(c,ivec2(0)))||any(greaterThanEqual(c,sz))) discard;
+  uint id=idAt(c); vec4 pal=texelFetch(uPal,ivec2(int(id),0),0);
+  if(id==0u||pal.a<0.5) discard;
+  vec2 f=p-vec2(c); float d=0.0;
+  if(w.x<0.25){ if(f.x<w.x&&c.x>0&&idAt(c-ivec2(1,0))!=id) d=1.0; if(f.x>1.0-w.x&&c.x<sz.x-1&&idAt(c+ivec2(1,0))!=id) d=1.0; }
+  if(w.y<0.25){ if(f.y<w.y&&c.y>0&&idAt(c-ivec2(0,1))!=id) d=1.0; if(f.y>1.0-w.y&&c.y<sz.y-1&&idAt(c+ivec2(0,1))!=id) d=1.0; }
+  outColor=vec4(pal.rgb*(1.0-0.45*d),uAlpha);
+}`;
+// intensity: pixels at or above "surface at" are solid (the 3D surface cuts through them), the rest faint
+const FS2_INT = `#version 300 es
+precision highp float; precision highp sampler2DArray;
+uniform sampler2DArray uVol; uniform vec2 uOrg,uVox; uniform int uPlane; uniform float uAlpha,uIso; uniform vec3 uColor;
+in vec2 vUm; out vec4 outColor;
+void main(){
+  vec2 p=(vUm-uOrg)/uVox; ivec2 sz=textureSize(uVol,0).xy, c=ivec2(floor(p));
+  if(any(lessThan(c,ivec2(0)))||any(greaterThanEqual(c,sz))) discard;
+  float v=texelFetch(uVol,ivec3(c,uPlane),0).r, r=v/uIso;
+  float a=v>=uIso?1.0:0.5*r*r;
+  if(a<0.01) discard;
+  outColor=vec4(uColor*(v>=uIso?1.0:0.75),a*uAlpha);
+}`;
+// solid: the same smoothed occupancy as the 3D surface, filled where it passes the threshold
+const FS2_SOLID = `#version 300 es
+precision highp float; precision highp sampler2DArray;
+uniform sampler2DArray uVol; uniform vec2 uOrg,uVox; uniform float uZ,uIso,uAlpha; uniform vec3 uColor;
+in vec2 vUm; out vec4 outColor;
+void main(){
+  vec2 p=(vUm-uOrg)/uVox; vec3 sz=vec3(textureSize(uVol,0));
+  float z=clamp(uZ-0.5,0.0,sz.z-1.0), z0=floor(z);
+  float v=mix(texture(uVol,vec3(p/sz.xy,z0)).r, texture(uVol,vec3(p/sz.xy,min(z0+1.0,sz.z-1.0))).r, z-z0);
+  float fw=fwidth(v);
+  if(p.x<0.0||p.y<0.0||p.x>sz.x||p.y>sz.y||v<uIso) discard;
+  outColor=vec4(uColor*((v-uIso)/max(fw,1e-6)<1.5?0.55:1.0),uAlpha);
+}`;
+const FS2_RGB = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uImg; uniform vec2 uOrg,uVox; uniform float uAlpha; uniform int uKey;
+in vec2 vUm; out vec4 outColor;
+void main(){
+  vec2 p=(vUm-uOrg)/uVox, sz=vec2(textureSize(uImg,0));
+  vec3 c=texture(uImg,p/sz).rgb;
+  if(p.x<0.0||p.y<0.0||p.x>=sz.x||p.y>=sz.y) discard;
+  float a=uAlpha;
+  // slide background is light and grey (min channel ~0.85-0.93, saturation ~0.01); stain is saturated
+  // (> 0.12) or dark, so either one keeps a pixel.  Fluorescence is the reverse: bright on black.
+  float mx=max(c.r,max(c.g,c.b)), mn=min(c.r,min(c.g,c.b));
+  if(uKey==1) a*=clamp(max((mx-mn-0.04)/0.08,(0.78-mn)/0.2),0.0,1.0);
+  else if(uKey==2) a*=clamp((mx-0.04)/0.10,0.0,1.0);
+  if(a<0.01) discard;
+  outColor=vec4(c,a);
+}`;
+
+// segmentation outlines: one LINE_LOOP per polygon ring (rings split by primitive restart), vertices
+// as uint16 steps of uQ µm from uOrg, a class id per vertex for colouring and filtering by cell type
+const VS_LINE2 = `#version 300 es
+layout(location=0) in vec2 aQ; layout(location=1) in float aCls;
+uniform vec2 uOrg; uniform float uQ; uniform vec3 uView; uniform vec2 uCanvas;
+flat out int vCls;
+void main(){ vec2 w=uOrg+aQ*uQ, n=(w-uView.xy)/(uView.z*0.5*uCanvas);
+  gl_Position=vec4(n.x,-n.y,0.0,1.0); vCls=int(aCls+0.5); }`;
+const VS_LINE3 = `#version 300 es
+layout(location=0) in vec2 aQ; layout(location=1) in float aCls; layout(location=2) in float aZ;
+uniform vec2 uOrg; uniform float uQ,uZ,uDZ; uniform mat4 uViewProj;
+flat out int vCls;
+void main(){ vec2 w=uOrg+aQ*uQ; gl_Position=uViewProj*vec4(w.x,-w.y,uZ+aZ*uDZ,1.0); vCls=int(aCls+0.5); }`;
+const FS_LINE = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uPal; uniform vec3 uColor; uniform float uAlpha; uniform int uByClass,uHasCls;
+flat in int vCls; out vec4 outColor;
+void main(){
+  vec4 pal=texelFetch(uPal,ivec2(vCls,0),0);
+  if(uHasCls==1 && vCls>0 && pal.a<0.5) discard;
+  outColor=vec4((uByClass==1 && vCls>0)?pal.rgb:uColor, uAlpha);
+}`;
+
+// solid view of a label map, from two bytes per voxel: the class with the largest smoothed occupancy and
+// that occupancy.  A class's occupancy at a point is interpolated over the 8 surrounding voxels; a voxel
+// led by another class holds at most min(v, 1-v) of it, since all occupancies sum to 1.  The surface of
+// a visible class is where that reaches "surface at" (>= 0.5, where the two bytes are exact).
+const GLSL_FK = `
+ivec3 gTsz;
+float fk(vec3 p, uint k){
+  vec3 q=p-0.5; ivec3 b=ivec3(floor(q)); vec3 w=q-vec3(b); float s=0.0;
+  for(int i=0;i<8;i++){
+    ivec3 o=ivec3(i&1,(i>>1)&1,(i>>2)&1);
+    uvec2 t=texelFetch(uVol,clamp(b+o,ivec3(0),gTsz-1),0).rg;
+    float v=float(t.g)/255.0, f=(t.r==k)?v:min(v,1.0-v);
+    vec3 ww=mix(vec3(1.0)-w,w,vec3(o));
+    s+=ww.x*ww.y*ww.z*f;
+  }
+  return s;
+}`;
+const FS_SOLIDT = `#version 300 es
+precision highp float; precision highp int;
+precision highp usampler2DArray; precision highp usampler2D; precision highp sampler2D;
+uniform usampler2DArray uVol; uniform usampler2D uOcc; uniform sampler2D uPal;
+uniform mat4 uViewProj; uniform vec3 uCam,uA,uB,uBmin,uBmax,uLight;
+uniform uvec2 uVis; uniform int uBS,uKeyed; uniform float uIso,uAlpha;
+in vec3 vWorld; out vec4 outColor;
+bool shown(uint id){ return id!=0u && texelFetch(uPal,ivec2(int(id),0),0).a>0.5; }
+${GLSL_FK}
+void main(){
+  vec3 dw=normalize(vWorld-uCam), ro=uA*uCam+uB, rd=uA*dw;
+  vec3 rds=vec3(abs(rd.x)<1e-12?1e-12:rd.x, abs(rd.y)<1e-12?1e-12:rd.y, abs(rd.z)<1e-12?1e-12:rd.z);
+  vec3 inv=1.0/rds, t0=(uBmin-ro)*inv, t1=(uBmax-ro)*inv, tsm=min(t0,t1), tbg=max(t0,t1);
+  float tface=max(max(tsm.x,tsm.y),tsm.z), tn=max(tface,0.0), tf=min(min(tbg.x,tbg.y),tbg.z);
+  if(tn>=tf) discard;
+  gTsz=textureSize(uVol,0);
+  ivec3 lo=max(ivec3(floor(uBmin)),ivec3(0)), hi=min(ivec3(ceil(uBmax))-1,gTsz-1);
+  float iso=max(uIso,0.502), stp=0.5/max(max(abs(rds.x),abs(rds.y)),abs(rds.z));
+  float t=tn, prevT=tn; bool hit=false; uint hk=0u, hc=0u;
+  for(int i=0;i<1600;i++){
+    if(t>=tf) break;
+    vec3 p=ro+rds*(t+1e-4);
+    ivec3 c=clamp(ivec3(floor(p)),lo,hi);
+    ivec2 blk=c.xy/uBS;
+    uvec2 oc=texelFetch(uOcc,blk,0).rg;
+    if(((oc.r&uVis.x)|(oc.g&uVis.y))==0u){             // no visible class can surface in this block
+      vec3 bmn=vec3(vec2(blk*uBS),float(lo.z)), bmx=vec3(vec2((blk+1)*uBS),float(hi.z+1));
+      vec3 eb=max((bmn-ro)*inv,(bmx-ro)*inv);
+      t=max(min(min(eb.x,eb.y),eb.z),t+1e-3); prevT=t; continue;
+    }
+    uvec3 tx3=texelFetch(uVol,c,0).rgb; uint k=tx3.r, cl=(uKeyed==1)?tx3.b:tx3.r;
+    if(shown(cl) && fk(p,k)>=iso){
+      float a=prevT, b=t;
+      for(int j=0;j<6;j++){ float m=0.5*(a+b); if(fk(ro+rds*m,k)>=iso) b=m; else a=m; }
+      t=b; hit=true; hk=k; hc=cl; break;
+    }
+    prevT=t; t+=stp;
+  }
+  if(!hit) discard;
+  vec3 p=ro+rds*t;
+  vec3 g=vec3(fk(p+vec3(0.75,0,0),hk)-fk(p-vec3(0.75,0,0),hk),
+              fk(p+vec3(0,0.75,0),hk)-fk(p-vec3(0,0.75,0),hk),
+              fk(p+vec3(0,0,0.75),hk)-fk(p-vec3(0,0,0.75),hk));
+  vec3 ng=-normalize(g*uA+vec3(1e-9)), n=ng;
+  // the top or bottom of the slab (a whole 2D map) cuts the surface: that face is the normal there
+  if(tface>=0.0 && t<=tface+1e-3 && tsm.z>=tsm.x && tsm.z>=tsm.y)
+    n=normalize(vec3(0.0,0.0,-sign(rds.z)*sign(uA.z))+0.45*ng);
+  float diff=max(dot(n,uLight),0.0), rim=pow(1.0-max(dot(n,-dw),0.0),2.5);
+  vec3 col=texelFetch(uPal,ivec2(int(hc),0),0).rgb*(0.40+0.60*diff+0.12*rim);
+  vec4 cp=uViewProj*vec4(uCam+dw*t,1.0);
+  gl_FragDepth=clamp((cp.z/cp.w)*0.5+0.5,0.0,1.0);
+  outColor=vec4(col,uAlpha);
+}`;
+const FS2_SOLIDT = `#version 300 es
+precision highp float; precision highp int; precision highp usampler2DArray; precision highp sampler2D;
+uniform usampler2DArray uVol; uniform sampler2D uPal; uniform vec2 uOrg,uVox; uniform float uZ,uIso,uAlpha; uniform int uKeyed;
+in vec2 vUm; out vec4 outColor;
+${GLSL_FK}
+void main(){
+  gTsz=textureSize(uVol,0);
+  vec2 pxy=(vUm-uOrg)/uVox; vec3 p=vec3(pxy,uZ);
+  uvec3 t3=texelFetch(uVol,clamp(ivec3(floor(p)),ivec3(0),gTsz-1),0).rgb;
+  uint k=t3.r, cl=(uKeyed==1)?t3.b:t3.r;
+  vec4 pal=texelFetch(uPal,ivec2(int(cl),0),0);
+  float iso=max(uIso,0.502), f=fk(p,k), fw=fwidth(f);
+  if(pxy.x<0.0||pxy.y<0.0||pxy.x>=float(gTsz.x)||pxy.y>=float(gTsz.y)) discard;
+  if(cl==0u||pal.a<0.5||f<iso) discard;
+  outColor=vec4(pal.rgb*((f-iso)/max(fw,1e-6)<1.5?0.7:1.0),uAlpha);
+}`;
+
+// transcripts: one point per molecule, placed in µm like everything else; round, with a dark rim
+const VS_PT3 = `#version 300 es
+layout(location=0) in vec3 aP;
+uniform mat4 uViewProj; uniform vec2 uOff; uniform float uZW,uSize;
+void main(){ vec2 w=aP.xy+uOff; gl_Position=uViewProj*vec4(w.x,-w.y,aP.z*uZW,1.0); gl_PointSize=uSize; }`;
+const VS_PT2 = `#version 300 es
+layout(location=0) in vec3 aP;
+uniform vec3 uView; uniform vec2 uCanvas; uniform float uSize,uZlo,uZhi;
+void main(){ vec2 n=(aP.xy-uView.xy)/(uView.z*0.5*uCanvas);
+  gl_Position=(aP.z<uZlo||aP.z>=uZhi)?vec4(2.0,2.0,2.0,1.0):vec4(n.x,-n.y,0.0,1.0); gl_PointSize=uSize; }`;
+const FS_PT = `#version 300 es
+precision highp float;
+uniform vec3 uColor; uniform float uAlpha; out vec4 outColor;
+void main(){ vec2 c=gl_PointCoord*2.0-1.0; float r=dot(c,c); if(r>1.0) discard;
+  outColor=vec4(uColor*(r>0.6?0.45:1.0),uAlpha); }`;
+
+// an array dataset's gene: one value per lattice bin, drawn as a sheet in the gene's colour
+const FS2_GRID = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uImg; uniform vec2 uOrg,uVox; uniform vec3 uColor; uniform float uAlpha,uGain;
+in vec2 vUm; out vec4 outColor;
+void main(){ vec2 p=(vUm-uOrg)/uVox; ivec2 sz=textureSize(uImg,0);
+  if(p.x<0.0||p.y<0.0||p.x>=float(sz.x)||p.y>=float(sz.y)) discard;
+  float v=texelFetch(uImg,ivec2(p),0).r*uGain; if(v<=0.004) discard;
+  outColor=vec4(uColor, min(1.0,v)*uAlpha); }`;
+const VS_GRID3 = `#version 300 es
+layout(location=0) in vec3 aPos;
+uniform mat4 uViewProj; uniform vec3 uBoxMin,uBoxMax;
+out vec2 vUV;
+void main(){ vec3 w=mix(uBoxMin,uBoxMax,aPos); vUV=aPos.xy; gl_Position=uViewProj*vec4(w,1.0); }`;
+const FS_GRID3 = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uImg; uniform vec3 uColor; uniform float uAlpha,uGain;
+in vec2 vUV; out vec4 outColor;
+void main(){ ivec2 sz=textureSize(uImg,0);
+  float v=texelFetch(uImg,ivec2(vUV*vec2(sz)),0).r*uGain; if(v<=0.004) discard;
+  outColor=vec4(uColor, min(1.0,v)*uAlpha); }`;
+
+function compile(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error("shader: "+gl.getShaderInfoLog(s));return s;}
+function program(fs,vs){const p=gl.createProgram();
+  gl.attachShader(p,compile(gl.VERTEX_SHADER,vs||VS)); gl.attachShader(p,compile(gl.FRAGMENT_SHADER,fs));
+  gl.bindAttribLocation(p,0,"aPos"); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error("link: "+gl.getProgramInfoLog(p));
+  const u={},n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+  for(let i=0;i<n;i++){const nm=gl.getActiveUniform(p,i).name;u[nm]=gl.getUniformLocation(p,nm);}
+  return {p,u};}
+const P_LABEL=program(FS_LABEL), P_ISO=program(FS_ISO), P_SOLID=program(FS_SOLID), P_TILED=program(FS_TILED), P_IMG=program(FS_IMG);
+const P_LINE2=program(FS_LINE,VS_LINE2), P_LINE3=program(FS_LINE,VS_LINE3);
+const P_SOLIDT=program(FS_SOLIDT), P2_SOLIDT=program(FS2_SOLIDT,VS2);
+const P_PT3=program(FS_PT,VS_PT3), P_PT2=program(FS_PT,VS_PT2);
+const P2_GRID=program(FS2_GRID,VS2), P_GRID3=program(FS_GRID3,VS_GRID3);
+const P2_LABEL=program(FS2_LABEL,VS2), P2_INT=program(FS2_INT,VS2), P2_SOLID=program(FS2_SOLID,VS2), P2_RGB=program(FS2_RGB,VS2);
+
+const cubeVAO=gl.createVertexArray();
+{ const V=[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]];
+  const F=[[0,3,2,1],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[0,4,7,3]];
+  const v=[]; for(const [a,b,c,d] of F) for(const i of [a,b,c,a,c,d]) v.push(...V[i]);
+  gl.bindVertexArray(cubeVAO);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(v),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.bindVertexArray(null); }
+
+const quadVAO=gl.createVertexArray();
+{ gl.bindVertexArray(quadVAO);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([0,0,0, 1,0,0, 1,1,0, 0,0,0, 1,1,0, 0,1,0]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0);
+  gl.bindVertexArray(null); }
+
+// ---------------------------------------------------------------- state
+const S = {
+  layers: [], zScale: 1, light:false, fov: 40*Math.PI/180,
+  cam:{target:[0,0,0],dist:1000,az:0,el:1.0}, vel:{az:0,el:0}, quality:1,
+  orbitCursor:false, cursor:[0,0],   // off by default: a drag turns the view where it is dir:"", store:null, bytes:0,
+  hiddenNames:new Set(),                         // cell types switched off, by name, for the whole dataset
+  mode2d:false, v2:{cx:0,cy:0,upp:1}, z2d:null, zPicked:false,  // 2D slice: centre (µm), µm per CSS pixel, z (µm)
+  viewPicked:false, autoFlat:false,               // did the visitor choose 2D/3D, or did the data?
+};
+let dirty=true, interacting=false, idleTimer=0, lastMs=0;
+function requestDraw(i){ dirty=true; if(i){ interacting=true; clearTimeout(idleTimer);
+  idleTimer=setTimeout(()=>{interacting=false;dirty=true;repumpAll();},160);} }
+
+// ---------------------------------------------------------------- data
+async function api(url){ const r=await fetch(url);
+  if(r.status===403&&!(r.headers.get("Content-Type")||"").includes("json"))
+    throw new Error("This viewer needs its access link. Open the full link you were given.");
+  const j=await r.json();
+  if(j.error) throw new Error(j.error); return j; }
+async function fetchGz(url){ const r=await fetch(url); if(!r.ok) throw new Error(url+": "+r.status);
+  const ds=r.body.pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(ds).arrayBuffer()); }
+function texU8(data,w,h,d,filter){
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY,t); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  if(filter) gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.R8,w,h,d,0,gl.RED,gl.UNSIGNED_BYTE,data);
+  else gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.R8UI,w,h,d,0,gl.RED_INTEGER,gl.UNSIGNED_BYTE,data);
+  const f=filter?gl.LINEAR:gl.NEAREST;
+  for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,f],[gl.TEXTURE_MAG_FILTER,f],
+    [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_R,gl.CLAMP_TO_EDGE]])
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY,k,v);
+  S.bytes+=w*h*d; return t; }
+async function fetchImg(url){ const r=await fetch(url); if(!r.ok) throw new Error(url+": "+r.status);
+  return await createImageBitmap(await r.blob(),{imageOrientation:"none",premultiplyAlpha:"none",colorSpaceConversion:"none"}); }
+function texImg(bm){
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,bm);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR],[gl.TEXTURE_MAG_FILTER,gl.NEAREST],
+    [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D,k,v);
+  S.bytes+=Math.round(bm.width*bm.height*4*1.33); return t; }
+// fill: by cell type (a cell without one is grey), or the outline colour, translucent; outline: as chosen
+function lineUniforms(u,L,fill){
+  const byC=fill?L.fillByClass:L.byClass;
+  // a segmentation's outlines are listed under its cells: that box's opacity is theirs too
+  const own=L.group?S.layers.find((o)=>o!==L&&o.group===L.group&&o.view===L.view&&o.meta.kind==="labels"):null;
+  const op=L.opacity*(own?own.opacity:1);
+  gl.uniform3fv(u.uColor,fill&&byC?[0.55,0.57,0.6]:hexRGB(L.color));
+  gl.uniform1f(u.uAlpha,fill&&!byC?0.35*op:op);
+  gl.uniform1i(u.uByClass,byC?1:0); gl.uniform1i(u.uHasCls,L.meta.classes&&L.meta.classes.length?1:0);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,L.pal||null); gl.uniform1i(u.uPal,0); }
+function palTex(layer){
+  const d=new Uint8Array(256*4);
+  for(const c of layer.meta.classes||[]){ const [r,g_,b]=hexRGB(c.color);
+    d.set([r*255,g_*255,b*255, layer.hidden.has(c.id)?0:255], c.id*4); }
+  if(!layer.pal){ layer.pal=gl.createTexture(); }
+  gl.bindTexture(gl.TEXTURE_2D,layer.pal); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,256,1,0,gl.RGBA,gl.UNSIGNED_BYTE,d);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST); }
+
+// occupancy per bs x bs xy block: a bitmask of the class ids present in the whole column
+// (ids >= 64 cannot be encoded, so such a block is marked as holding everything)
+function occTex(data,w,h,d,bs){
+  const bw=Math.ceil(w/bs), bh=Math.ceil(h/bs), occ=new Uint32Array(bw*bh*2), colBlk=new Int32Array(w);
+  for(let x=0;x<w;x++) colBlk[x]=(x/bs)|0;
+  let i=0;
+  for(let z=0;z<d;z++) for(let y=0;y<h;y++){ const row=((y/bs)|0)*bw;
+    for(let x=0;x<w;x++,i++){ const id=data[i]; if(!id) continue;
+      const k=(row+colBlk[x])*2;
+      if(id<64) occ[k+(id>>5)]|=1<<(id&31); else { occ[k]=0xFFFFFFFF; occ[k+1]=0xFFFFFFFF; } } }
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RG32UI,bw,bh,0,gl.RG_INTEGER,gl.UNSIGNED_INT,occ);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  return t; }
+function tileProgress(L){
+  const n=L.tiles.filter((t)=>t.state!=="empty"), r=n.filter((t)=>t.state==="ready").length;
+  setStatus(`full-resolution tiles ${r}/${n.length}${r<n.length?" (overview shown meanwhile)":""}, ${(S.bytes/1e6).toFixed(0)} MB on the GPU`); }
+// GPU memory: full-resolution tiles — of every layer together — are held only up to this many bytes.
+// Only tiles count: outlines, overviews and the like are small next to them or cannot be dropped.  Past
+// the limit the tiles nearest the view are kept, whichever layer they belong to (the farthest tile of
+// any layer is dropped to make room for a nearer one), and the rest is drawn from the overview; tiles
+// follow the view as it moves.  A layer that is switched off or not being drawn (voxels while its solid
+// view is on, and back) gives its tiles up at once.
+const GPU_BUDGET=2000e6;
+function tileSets(){ const o=[];
+  for(const L of S.layers){ if(L.tiles&&L.tiles.length) o.push([L.meta,L.tiles]); if(L.stiles&&L.solid) o.push([L.solid,L.stiles]); }
+  return o; }
+function tilesInUse(){ let b=0; for(const [,ts] of tileSets()) for(const t of ts) if(t.state==="ready") b+=t.bytes||0; return b; }
+function tileDist(m,T){ const v=m.voxel_um, o=m.origin_um, tg=S.mode2d?[S.v2.cx,-S.v2.cy]:S.cam.target;
+  return Math.hypot(o[0]+(T.x0+T.w/2)*v[0]-tg[0], -(o[1]+(T.y0+T.h/2)*v[1])-tg[1]); }
+function freeTile(T){ if(T.tex) gl.deleteTexture(T.tex); if(T.occ) gl.deleteTexture(T.occ);
+  T.tex=T.occ=null; if(T.state==="ready") S.bytes-=T.bytes||0; T.bytes=0; T.state="none"; }
+// room for `need` more bytes of tiles, by dropping ready tiles (of any layer) farther from the view than `near`
+function makeRoom(m,near,need){
+  let used=tilesInUse();
+  while(used+need>GPU_BUDGET){
+    let far=null, fd=tileDist(m,near)+1;
+    for(const [mm,ts] of tileSets()) for(const t of ts){ if(t.state!=="ready") continue; const d=tileDist(mm,t); if(d>fd){ far=t; fd=d; } }
+    if(!far) return false;
+    used-=far.bytes||0; freeTile(far); }
+  return true; }
+function budgetNote(){ setStatus(`GPU memory limit (${(GPU_BUDGET/1e6).toFixed(0)} MB) reached: full resolution near the view, the overview elsewhere. Switch other layers off to load more.`); }
+function releaseTiles(L){
+  for(const T of L.tiles||[]) if(T.state==="ready") freeTile(T);
+  for(const T of L.stiles||[]) if(T.state==="ready") freeTile(T); }
+function repump(L){ if(!L.visible) return;
+  if(L.mode==="solid"){ for(const T of L.tiles||[]) if(T.state==="ready") freeTile(T); if(L.stiles) pumpSolidTiles(L); }
+  else { for(const T of L.stiles||[]) if(T.state==="ready") freeTile(T); if(L.tiled) pumpTiles(L); } }
+function repumpAll(){ for(const L of S.layers) repump(L); }
+function pumpTiles(L){
+  if(!S.layers.includes(L)||!L.visible||L.mode==="solid") return;
+  const m=L.meta;
+  const need=(T)=>m.kind==="rgb"?Math.round(T.w*T.h*4*1.33):T.w*T.h*m.dims.z;
+  const queue=L.tiles.filter((t)=>t.state==="none").sort((a,b)=>tileDist(m,a)-tileDist(m,b));
+  while(L.tilesBusy<2 && queue.length){
+    if(!makeRoom(m,queue[0],need(queue[0]))){ budgetNote(); break; }
+    const T=queue.shift(); T.state="loading"; L.tilesBusy++;
+    (m.kind==="rgb"
+      ? fetchImg(T.file).then((bm)=>{
+          if(!S.layers.includes(L)){ bm.close(); return; }
+          const b0=S.bytes; T.tex=texImg(bm); bm.close(); T.bytes=S.bytes-b0; T.state="ready"; gpuCheck(); })
+      : fetchGz(T.file).then((data)=>{
+          if(!S.layers.includes(L)) return;      // the dataset changed while this was loading
+          const b0=S.bytes; T.tex=texU8(data,T.w,T.h,m.dims.z,false); T.occ=occTex(data,T.w,T.h,m.dims.z,16);
+          T.bytes=S.bytes-b0; T.state="ready"; gpuCheck();
+          if(!L.visible||L.mode==="solid") freeTile(T);   // switched off while it was on its way
+        })).catch((e)=>{ T.tries=(T.tries||0)+1; T.state=T.tries<3?"none":"error"; if(T.state==="error") setStatus("tile: "+e.message,true); })
+      .finally(()=>{ L.tilesBusy--; tileProgress(L); requestDraw(); pumpTiles(L); });
+  }
+}
+
+async function addLayer(meta){
+  const tiled=!!meta.tiled;
+  setStatus(`loading ${meta.name} (${tiled?"overview first":(meta.bytes/1e6).toFixed(1)+" MB"})...`);
+  const data=(meta.kind==="rgb"||meta.kind==="shapes")?null:await fetchGz(tiled?meta.overview.file:meta.file);
+  // an intensity layer (nuclei from a morphology stack) starts translucent: it is context
+  // around the labels, and an opaque shell would simply hide whatever it covers
+  const L={ meta, visible:true, opacity: meta.kind==="intensity" ? 0.5 : 1,
+            iso:0.35, hidden:new Set(), color:meta.color||"#9fd0ff", tex:null, pal:null,
+            mode:"voxel", solid:null, solidVol:new Map(), solidIso:0.30, envelope:false, solidNote:"" };
+  L.tiled=tiled; L.ov=null; L.tiles=[]; L.tilesBusy=0;
+  if(meta.kind==="shapes"){                   // segmentation outlines: one index buffer of line loops
+    const sh=meta.shapes;
+    const [xyB,nB,cB,rpB,tcB,tiB,zrB]=await Promise.all([fetchGz(sh.xy),fetchGz(sh.n),sh.c?fetchGz(sh.c):null,
+      sh.ti?fetchGz(sh.rp):null, sh.ti?fetchGz(sh.tc):null, sh.ti?fetchGz(sh.ti):null, sh.zr?fetchGz(sh.zr):null]);
+    const xy=new Uint16Array(xyB.buffer,xyB.byteOffset,xyB.byteLength>>1);
+    const cnt=new Uint16Array(nB.buffer,nB.byteOffset,nB.byteLength>>1);
+    const nv=xy.length>>1, idx=new Uint32Array(nv+cnt.length), cls=new Uint8Array(nv), zp=zrB?new Uint8Array(nv):null;
+    let v=0, k=0;
+    for(let r=0;r<cnt.length;r++){ const c=cB?cB[r]:0;
+      for(let i=0;i<cnt[r];i++){ cls[v]=c; if(zp) zp[v]=zrB[r]; idx[k++]=v++; } idx[k++]=0xFFFFFFFF; }
+    const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+    const b0=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b0); gl.bufferData(gl.ARRAY_BUFFER,xy,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.UNSIGNED_SHORT,false,0,0);
+    const b1=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b1); gl.bufferData(gl.ARRAY_BUFFER,cls,gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,1,gl.UNSIGNED_BYTE,false,0,0);
+    const bufs=[b0,b1];
+    if(zp){ const b2=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b2); gl.bufferData(gl.ARRAY_BUFFER,zp,gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,1,gl.UNSIGNED_BYTE,false,0,0); bufs.push(b2); S.bytes+=zp.byteLength; }
+    const eb=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,eb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    bufs.push(eb); L.lines={vao,bufs,count:idx.length};
+    if(tiB){                                  // the fill: per-polygon triangles, local indices made global
+      const u16=(b)=>new Uint16Array(b.buffer,b.byteOffset,b.byteLength>>1);
+      const rp=u16(rpB), tc=u16(tcB), ti=u16(tiB), tidx=new Uint32Array(ti.length);
+      let ring=0, vb=0, t=0;
+      for(let p=0;p<rp.length;p++){ const base=vb;
+        for(let r=0;r<rp[p];r++) vb+=cnt[ring++];
+        for(let i=0,n=tc[p]*3;i<n;i++,t++) tidx[t]=base+ti[t]; }
+      const fvao=gl.createVertexArray(); gl.bindVertexArray(fvao);
+      gl.bindBuffer(gl.ARRAY_BUFFER,b0); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.UNSIGNED_SHORT,false,0,0);
+      gl.bindBuffer(gl.ARRAY_BUFFER,b1); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,1,gl.UNSIGNED_BYTE,false,0,0);
+      const fb=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,fb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,tidx,gl.STATIC_DRAW);
+      gl.bindVertexArray(null);
+      L.fillGeo={vao:fvao,buf:fb,count:tidx.length}; S.bytes+=tidx.byteLength;
+    }
+    const hasCls=!!(meta.classes&&meta.classes.length);
+    L.fill=hasCls&&!!L.fillGeo; L.fillByClass=hasCls; L.outline=true; L.byClass=false; L.color=meta.color||"#ffffff";
+    S.bytes+=xy.byteLength+cls.byteLength+idx.byteLength;
+  } else if(meta.kind==="rgb"){                      // a colour image: JPEG tiles, overview first
+    const o=meta.overview, bm=await fetchImg(o.file);
+    L.ov={ tex:texImg(bm), factor:o.factor, w:o.w, h:o.h }; bm.close();
+    L.keyWhite=true; L.keyMode=meta.bg_key==="dark"?2:1;   // hide the slide's white, or fluorescence's black
+    L.tiles=meta.tiles.map((t)=>({...t, state:"none", tex:null}));
+  } else if(tiled){
+    const o=meta.overview;
+    L.ov={ tex:texU8(data,o.w,o.h,meta.dims.z,false), occ:occTex(data,o.w,o.h,meta.dims.z,4), factor:o.factor, w:o.w, h:o.h };
+    L.tiles=meta.tiles.map((t)=>({...t, state:t.empty?"empty":"none", tex:null, occ:null}));
+  } else {
+    L.tex=texU8(data,meta.dims.x,meta.dims.y,meta.dims.z, meta.kind==="intensity");
+  }
+  if(meta.classes&&meta.classes.length){      // a layer ticked later starts with the dataset's selection
+    L.hidden=new Set(meta.classes.filter((c)=>S.hiddenNames.has(c.name)).map((c)=>c.id)); palTex(L); }
+  S.layers.push(L); renderLayers(); syncZ(); syncViewButtons();
+  // outlines lie inside the section, so ticking them keeps the view — unless there is nothing else to frame
+  if(meta.kind!=="shapes"||S.layers.length===1) fitAll();
+  requestDraw();
+  setStatus(`${S.layers.length} layer(s), ${(S.bytes/1e6).toFixed(0)} MB on the GPU`);
+  if(tiled){ tileProgress(L); pumpTiles(L); }
+}
+
+// ---------------------------------------------------------------- camera
+function camBasis(){ const c=S.cam;
+  const off=[Math.cos(c.el)*Math.sin(c.az), -Math.cos(c.el)*Math.cos(c.az), Math.sin(c.el)];
+  const eye=add(c.target,scl(off,c.dist)), fwd=norm(sub(c.target,eye));
+  const right=norm(cross(fwd,[0,0,1])), up=cross(right,fwd);
+  return {eye,fwd,right,up}; }
+function bounds(){
+  let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for(const L of S.layers){ const m=L.meta, o=m.origin_um, v=m.voxel_um, d=m.dims;
+    const a=[o[0],o[1],o[2]], b=[o[0]+d.x*v[0], o[1]+d.y*v[1], o[2]+d.z*v[2]];
+    for(let i=0;i<3;i++){ mn[i]=Math.min(mn[i],a[i]); mx[i]=Math.max(mx[i],b[i]); } }
+  if(mn[0]>mx[0]) return {mn:[0,0,0],mx:[100,100,10]};
+  return {mn,mx}; }
+function fitAll(){ if(S.mode2d) return fit2D(); const {mn,mx}=bounds(); const zw=S.zScale;
+  S.cam.target=[(mn[0]+mx[0])/2, -(mn[1]+mx[1])/2, (mn[2]+mx[2])/2*zw];
+  S.cam.dist=0.62*Math.max(mx[0]-mn[0],mx[1]-mn[1])/Math.tan(S.fov/2);
+  S.vel.az=S.vel.el=0; requestDraw(); }
+function setView(kind){ const c=S.cam;
+  if(kind==="2d") return set2D(true);
+  if(kind==="3d") return has3D()&&set2D(false);
+  if(!has3D()) return set2D(true);              // top / oblique / side are 3D views
+  if(S.mode2d) set2D(false);
+  if(kind==="reset") return fitAll();
+  if(kind==="top"){c.az=0;c.el=Math.PI/2-0.002;} else if(kind==="oblique"){c.az=-0.55;c.el=0.62;}
+  else if(kind==="side"){c.az=0;c.el=0.02;}
+  requestDraw(); }
+
+// ---------------------------------------------------------------- draw
+function sizeCanvas(){ const dpr=Math.min(window.devicePixelRatio||1,2);
+  if(interacting){ if(lastMs>45&&S.quality>0.3) S.quality=Math.max(0.3,S.quality*0.8);
+    else if(lastMs<18&&S.quality<1) S.quality=Math.min(1,S.quality*1.15); }
+  const s=interacting?Math.max(0.25,dpr*0.55*S.quality):dpr;
+  const w=Math.max(1,Math.floor(canvas.clientWidth*s)), h=Math.max(1,Math.floor(canvas.clientHeight*s));
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;} }
+function draw(){
+  if(S.mode2d) return draw2D();
+  sizeCanvas();
+  const t0=performance.now();
+  gl.viewport(0,0,canvas.width,canvas.height);
+  if(S.light) gl.clearColor(0.96,0.96,0.95,1); else gl.clearColor(0.055,0.063,0.078,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS);
+  gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT);
+  const rebase=[Math.round(S.cam.target[0]),Math.round(S.cam.target[1]),0];
+  const {eye}=camBasis(), e=sub(eye,rebase), tgt=sub(S.cam.target,rebase);
+  const {mn,mx}=bounds(), reach=Math.hypot(mx[0]-mn[0],mx[1]-mn[1])+ (mx[2]-mn[2])*S.zScale;
+  const VP=mul(perspective(S.fov,canvas.width/canvas.height,Math.max(0.02,S.cam.dist*0.002),
+                           S.cam.dist+reach*1.5+1000), lookAt(e,tgt,[0,0,1]));
+  const light=norm(add(scl(norm(sub(eye,S.cam.target)),0.55),[0.25,0.35,0.8]));
+  const zw=S.zScale;
+  // a colour image is blended (its white background can be keyed out) and goes under the rest
+  const isImg=(L)=>L.meta.kind==="rgb", isLine=(L)=>L.meta.kind==="shapes";
+  const opaque=S.layers.filter(L=>L.visible&&inView(L)&&L.opacity>=1&&!isImg(L)&&!isLine(L));
+  const clear_=S.layers.filter(L=>L.visible&&inView(L)&&(L.opacity<1||isImg(L))&&!isLine(L)).sort((a,b)=>isImg(b)-isImg(a));
+  const place=(u,m)=>{ const v=m.voxel_um, o=m.origin_um, d=m.dims;
+    const A=[1/v[0], -1/v[1], 1/(v[2]*zw)], B=[-o[0]/v[0], -o[1]/v[1], -o[2]/v[2]];
+    gl.uniform3fv(u.uA,A); gl.uniform3fv(u.uB,[B[0]+A[0]*rebase[0], B[1]+A[1]*rebase[1], B[2]+A[2]*rebase[2]]);
+    gl.uniform3fv(u.uBmin,[0,0,0]); gl.uniform3fv(u.uBmax,[d.x,d.y,d.z]);
+    gl.uniform3f(u.uBoxMin, o[0]-rebase[0], -(o[1]+d.y*v[1])-rebase[1], o[2]*zw);
+    gl.uniform3f(u.uBoxMax, o[0]+d.x*v[0]-rebase[0], -o[1]-rebase[1], (o[2]+d.z*v[2])*zw); };
+  // a label layer in solid mode: one iso-surface per visible cell type, each from its own
+  // occupancy volume; the translucent tissue envelope is drawn later, in the blended pass
+  const drawSolidTiles=(L)=>{
+    const m=L.solid, v=m.voxel_um, o=m.origin_um, D=m.dims.z, u=P_SOLIDT.u;
+    if(!L.sov||!L.sov.tex) return;
+    gl.useProgram(P_SOLIDT.p); gl.bindVertexArray(cubeVAO);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform3fv(u.uCam,e); gl.uniform3fv(u.uLight,light);
+    gl.uniform1f(u.uAlpha,L.opacity); gl.uniform1f(u.uIso,L.solidIso); gl.uniform1i(u.uKeyed,m.channels===3?1:0);
+    let lo=0, hi=0;
+    for(const c of m.classes){ if(L.hidden.has(c.id)) continue;
+      if(c.id<32) lo|=1<<c.id; else if(c.id<64) hi|=1<<(c.id-32); else { lo=-1; hi=-1; } }
+    gl.uniform2ui(u.uVis,lo>>>0,hi>>>0);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,L.pal); gl.uniform1i(u.uPal,2);
+    gl.uniform1i(u.uVol,0); gl.uniform1i(u.uOcc,1);
+    const Az=1/(v[2]*zw), Bz=-o[2]/v[2], wz0=o[2]*zw, wz1=(o[2]+D*v[2])*zw;
+    for(const T of L.stiles||[]){
+      if(T.state==="empty") continue;
+      const full=T.state==="ready", f=full?1:L.sov.factor;
+      const A=[1/(v[0]*f), -1/(v[1]*f), Az];
+      const B=full?[-o[0]/v[0]-T.x0, -o[1]/v[1]-T.y0, Bz]:[-o[0]/(v[0]*f), -o[1]/(v[1]*f), Bz];
+      gl.uniform3fv(u.uA,A); gl.uniform3fv(u.uB,[B[0]+A[0]*rebase[0], B[1]+A[1]*rebase[1], B[2]+A[2]*rebase[2]]);
+      gl.uniform3fv(u.uBmin, full?[0,0,0]:[T.x0/f, T.y0/f, 0]);
+      gl.uniform3fv(u.uBmax, full?[T.w,T.h,D]:[(T.x0+T.w)/f, (T.y0+T.h)/f, D]);
+      gl.uniform1i(u.uBS, full?16:4);
+      gl.uniform3f(u.uBoxMin, o[0]+T.x0*v[0]-rebase[0], -(o[1]+(T.y0+T.h)*v[1])-rebase[1], wz0);
+      gl.uniform3f(u.uBoxMax, o[0]+(T.x0+T.w)*v[0]-rebase[0], -(o[1]+T.y0*v[1])-rebase[1], wz1);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, full?T.tex:L.sov.tex);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, full?T.occ:L.sov.occ);
+      gl.drawArrays(gl.TRIANGLES,0,36);
+    } };
+  const drawSolid=(L,envelope)=>{
+    if(!L.solid) return;
+    const tiled=L.solid.kind==="solidtiles";
+    if(tiled&&!envelope) return drawSolidTiles(L);
+    const u=P_SOLID.u; gl.useProgram(P_SOLID.p); gl.bindVertexArray(cubeVAO);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform3fv(u.uCam,e); gl.uniform3fv(u.uLight,light);
+    place(u,tiled?L.solid.tissue:L.solid); gl.uniform1i(u.uBS,SOLID_BS); gl.uniform1f(u.uIso,L.solidIso);
+    gl.uniform1i(u.uVol,0); gl.uniform1i(u.uBlk,1);
+    const one=(vol,rgb,alpha)=>{ if(!vol) return;
+      gl.uniform3fv(u.uColor,rgb); gl.uniform1f(u.uAlpha,alpha);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY,vol.tex);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,vol.blk);
+      gl.drawArrays(gl.TRIANGLES,0,36); };
+    if(envelope){ one(L.solidVol.get("tissue"),[0.72,0.75,0.8],0.30); return; }
+    for(const c of L.solid.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(c.color),L.opacity); };
+  const drawTiled=(L)=>{
+    const m=L.meta, v=m.voxel_um, o=m.origin_um, D=m.dims.z, u=P_TILED.u;
+    gl.useProgram(P_TILED.p); gl.bindVertexArray(cubeVAO);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform3fv(u.uCam,e); gl.uniform3fv(u.uLight,light);
+    gl.uniform1f(u.uAlpha,L.opacity); gl.uniform1i(u.uOutline,1);
+    gl.uniform1f(u.uPixScale,2*Math.tan(S.fov/2)/canvas.height);
+    let lo=0, hi=0;
+    for(const c of m.classes){ if(L.hidden.has(c.id)) continue;
+      if(c.id<32) lo|=1<<c.id; else if(c.id<64) hi|=1<<(c.id-32); else { lo=-1; hi=-1; } }
+    gl.uniform2ui(u.uVis,lo>>>0,hi>>>0);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,L.pal); gl.uniform1i(u.uPal,2);
+    gl.uniform1i(u.uVol,0); gl.uniform1i(u.uOcc,1);
+    const Az=1/(v[2]*zw), Bz=-o[2]/v[2], wz0=o[2]*zw, wz1=(o[2]+D*v[2])*zw;
+    for(const T of L.tiles){
+      if(T.state==="empty") continue;
+      const full=T.state==="ready";
+      if(!full && !L.ov) continue;
+      const f=full?1:L.ov.factor;
+      const A=[1/(v[0]*f), -1/(v[1]*f), Az];
+      const B=full?[-o[0]/v[0]-T.x0, -o[1]/v[1]-T.y0, Bz]:[-o[0]/(v[0]*f), -o[1]/(v[1]*f), Bz];
+      gl.uniform3fv(u.uA,A); gl.uniform3fv(u.uB,[B[0]+A[0]*rebase[0], B[1]+A[1]*rebase[1], B[2]+A[2]*rebase[2]]);
+      gl.uniform3fv(u.uBmin, full?[0,0,0]:[T.x0/f, T.y0/f, 0]);
+      gl.uniform3fv(u.uBmax, full?[T.w,T.h,D]:[(T.x0+T.w)/f, (T.y0+T.h)/f, D]);
+      gl.uniform1i(u.uBS, full?16:4);
+      gl.uniform3f(u.uBoxMin, o[0]+T.x0*v[0]-rebase[0], -(o[1]+(T.y0+T.h)*v[1])-rebase[1], wz0);
+      gl.uniform3f(u.uBoxMax, o[0]+(T.x0+T.w)*v[0]-rebase[0], -(o[1]+T.y0*v[1])-rebase[1], wz1);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, full?T.tex:L.ov.tex);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, full?T.occ:L.ov.occ);
+      gl.drawArrays(gl.TRIANGLES,0,36);
+    } };
+  const drawImage3D=(L)=>{
+    const m=L.meta, v=m.voxel_um, o=m.origin_um, u=P_IMG.u, zt=(o[2]+m.dims.z*v[2])*zw;
+    gl.useProgram(P_IMG.p); gl.bindVertexArray(quadVAO); gl.disable(gl.CULL_FACE);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform1f(u.uAlpha,L.opacity);
+    gl.uniform1i(u.uKey,L.keyWhite?(L.keyMode||1):0); gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
+    for(const T of L.tiles){
+      const full=T.state==="ready"; if(!full&&!L.ov) continue;
+      gl.uniform3f(u.uBoxMin, o[0]+T.x0*v[0]-rebase[0], -(o[1]+(T.y0+T.h)*v[1])-rebase[1], zt);
+      gl.uniform3f(u.uBoxMax, o[0]+(T.x0+T.w)*v[0]-rebase[0], -(o[1]+T.y0*v[1])-rebase[1], zt);
+      gl.uniform4fv(u.uUV, full?[0,0,1,1]:[T.x0/m.dims.x, T.y0/m.dims.y, (T.x0+T.w)/m.dims.x, (T.y0+T.h)/m.dims.y]);
+      gl.bindTexture(gl.TEXTURE_2D, full?T.tex:L.ov.tex);
+      gl.drawArrays(gl.TRIANGLES,0,6);
+    }
+    gl.enable(gl.CULL_FACE); };
+  const drawLayer=(L)=>{
+    if(L.meta.kind==="rgb") return drawImage3D(L);
+    if(L.meta.kind==="labels" && L.mode==="solid") return drawSolid(L,false);
+    if(L.tiled) return drawTiled(L);
+    const m=L.meta, v=m.voxel_um, o=m.origin_um, d=m.dims;
+    const pr = m.kind==="labels" ? P_LABEL : P_ISO, u=pr.u;
+    gl.useProgram(pr.p); gl.bindVertexArray(cubeVAO);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP);
+    gl.uniform3fv(u.uCam,e); gl.uniform3fv(u.uLight,light);
+    const A=[1/v[0], -1/v[1], 1/(v[2]*zw)];
+    const B=[-o[0]/v[0], -o[1]/v[1], -o[2]/v[2]];
+    const Bp=[B[0]+A[0]*rebase[0], B[1]+A[1]*rebase[1], B[2]+A[2]*rebase[2]];
+    gl.uniform3fv(u.uA,A); gl.uniform3fv(u.uB,Bp);
+    gl.uniform3fv(u.uBmin,[0,0,0]); gl.uniform3fv(u.uBmax,[d.x,d.y,d.z]);
+    gl.uniform3f(u.uBoxMin, o[0]-rebase[0], -(o[1]+d.y*v[1])-rebase[1], o[2]*zw);
+    gl.uniform3f(u.uBoxMax, o[0]+d.x*v[0]-rebase[0], -o[1]-rebase[1], (o[2]+d.z*v[2])*zw);
+    gl.uniform1f(u.uAlpha,L.opacity);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY,L.tex); gl.uniform1i(u.uVol,0);
+    if(m.kind==="labels"){ gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,L.pal);
+      gl.uniform1i(u.uPal,1); gl.uniform1i(u.uOutline,1); }
+    else { gl.uniform1f(u.uIso,L.iso); gl.uniform3fv(u.uColor,hexRGB(L.color)); }
+    gl.drawArrays(gl.TRIANGLES,0,36); };
+  for(const L of opaque) drawLayer(L);
+  // transcripts after the opaque layers and before the translucent ones: they are hidden by an opaque
+  // cell-type map in front of them and seen through a translucent one
+  drawGenes3D(VP,rebase,zw);
+  const shells=S.layers.filter(L=>L.visible&&inView(L)&&L.mode==="solid"&&L.envelope);
+  if(clear_.length||shells.length){ gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    // a translucent label layer keeps its nearest surface in the depth buffer, so what lies deeper
+    // (another cell's outline 20 planes down) is seen only through the cells, not over them
+    for(const L of clear_){ gl.depthMask(L.meta.kind==="labels"); drawLayer(L); }
+    gl.depthMask(false); for(const L of shells) drawSolid(L,true);
+    gl.depthMask(true); gl.disable(gl.BLEND); }
+  // outlines last, over everything at their z, never writing depth
+  const lines=S.layers.filter(L=>L.visible&&inView(L)&&isLine(L)&&L.lines&&
+    !S.layers.some(o=>o!==L&&o.group&&o.group===L.group&&o.visible&&o.mode==="solid"));
+  // an outline layer with one z for every cell was traced on the section's picture, but is placed at
+  // the top of the volume so it reads over the map in the flat view.  Thirty microns of height is a
+  // visible slide under a perspective camera, so while that picture is on show the outlines are drawn
+  // in ITS plane and the two stay registered; outlines that carry their own z (3D boundaries) do not move.
+  const picL=S.layers.find((L)=>L.visible&&inView(L)&&isPicture(L)), pm=picL&&picL.meta;
+  const picZ=pm?pm.origin_um[2]+pm.dims.z*pm.voxel_um[2]:null;
+  if(lines.length){ gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false); gl.depthFunc(gl.LEQUAL);
+    for(const L of lines){ const m=L.meta, u=P_LINE3.u;
+      // An outline layer with one z for every cell is an overlay on the section, not something
+      // standing in the volume: it is drawn in the picture's plane (so the camera cannot slide the
+      // two apart) and over everything, or the map — which is drawn opaque, above that plane —
+      // would hide the very outlines it is being compared with.  Outlines that carry their own z
+      // (3D boundaries) are in the volume and keep their depth.
+      if(m.dz) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(P_LINE3.p);
+      gl.uniformMatrix4fv(u.uViewProj,false,VP);
+      gl.uniform2f(u.uOrg,m.origin_um[0]-rebase[0],m.origin_um[1]+rebase[1]);
+      const zFlat=(picZ!==null&&!m.dz)?picZ:m.origin_um[2];
+      gl.uniform1f(u.uQ,m.q); gl.uniform1f(u.uZ,zFlat*zw); gl.uniform1f(u.uDZ,(m.dz||0)*zw);
+      if(L.fill&&L.fillGeo){ lineUniforms(u,L,true); gl.bindVertexArray(L.fillGeo.vao); gl.disable(gl.CULL_FACE);
+        gl.drawElements(gl.TRIANGLES,L.fillGeo.count,gl.UNSIGNED_INT,0); gl.enable(gl.CULL_FACE); }
+      if(L.outline){ lineUniforms(u,L,false); gl.bindVertexArray(L.lines.vao);
+        gl.drawElements(gl.LINE_LOOP,L.lines.count,gl.UNSIGNED_INT,0); } }
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LESS); gl.depthMask(true); gl.disable(gl.BLEND); }
+  lastMs=performance.now()-t0;
+  overlays();
+}
+// the scale bar: a round number of µm about 120 CSS pixels wide, and how wide that is on screen
+function scaleBar(){
+  const umPerPx=S.mode2d?S.v2.upp:2*Math.tan(S.fov/2)*S.cam.dist/Math.max(canvas.clientHeight,1);
+  const want=umPerPx*120, p=Math.pow(10,Math.floor(Math.log10(want))), m=want/p;
+  const len=(m>=5?5:m>=2?2:1)*p;
+  return { len, px:len/umPerPx, label: len>=1000 ? `${len/1000} mm` : `${len} \u00b5m` }; }
+function overlays(){
+  const sb=scaleBar();
+  $("#sbBar").style.width=Math.round(sb.px)+"px";
+  $("#sbLabel").textContent=sb.label;
+  const {right,up}=S.mode2d?{right:[1,0,0],up:[0,1,0]}:camBasis(); let svg="";
+  for(const [nm,v,c] of [["x",[1,0,0],"#ff6b6b"],["y",[0,-1,0],"#63d471"],["z",[0,0,1],"#6aa8ff"]]){
+    if(S.mode2d&&nm==="z") continue;
+    const sx=44+dot(v,right)*30, sy=44-dot(v,up)*30;
+    svg+=`<line x1="44" y1="44" x2="${sx.toFixed(1)}" y2="${sy.toFixed(1)}" stroke="${c}" stroke-width="2.5" stroke-linecap="round"/>`+
+         `<text x="${(44+(sx-44)*1.28).toFixed(1)}" y="${(44+(sy-44)*1.28+4).toFixed(1)}" fill="${c}" text-anchor="middle">${nm}</text>`; }
+  $("#triad").innerHTML=svg;
+}
+// ---------------------------------------------------------------- 2D slice
+const HELP3=$("#help").innerHTML;
+const HELP2="drag: pan &middot; wheel: zoom &middot; [ ]: previous / next z plane<br>H: home &middot; arrows: pan &middot; + &minus;: zoom";
+// the z planes on offer: those of the layers that HAVE planes; a single-plane layer (a 2D map, an
+// H&E image) is shown at every z, since there is no other plane it could be shown at
+function zGrid(){
+  const deep=S.layers.filter((L)=>L.meta.dims.z>1&&L.view!=="3d"); if(!deep.length) return null;
+  let lo=1e9, hi=-1e9, step=1e9;
+  for(const L of deep){ const m=L.meta; lo=Math.min(lo,m.origin_um[2]);
+    hi=Math.max(hi,m.origin_um[2]+m.dims.z*m.voxel_um[2]); step=Math.min(step,m.voxel_um[2]); }
+  return {lo,step,n:Math.max(1,Math.round((hi-lo)/step))}; }
+function syncZ(){
+  const g=zGrid(), zs=$("#zplane");
+  $("#zRow").hidden=!g;
+  if(!g){ $("#zInfo").textContent=S.layers.length?"Every layer is a single plane.":""; requestDraw(); return; }
+  // the slice opens at the middle plane of the cell-type map (or of the deepest layer drawn in 2D)
+  const deep=S.layers.filter((L)=>L.meta.dims.z>1&&L.view!=="3d");
+  const main=deep.find((L)=>L.meta.kind==="labels")||deep[0];
+  const mid=main?main.meta.origin_um[2]+(Math.floor(main.meta.dims.z/2)+0.5)*main.meta.voxel_um[2]:null;
+  // until the visitor moves the slider the plane stays at that middle, even as more layers arrive
+  let k=(S.zPicked||mid==null)?Math.floor((S.z2d==null?g.lo+g.n/2*g.step:S.z2d-g.lo)/g.step)
+                             :Math.round((mid-g.lo)/g.step-0.5);
+  k=Math.max(0,Math.min(g.n-1,k)); zs.max=g.n-1; zs.value=k; S.z2d=g.lo+(k+0.5)*g.step;
+  $("#zplaneV").textContent=`${+S.z2d.toFixed(1)} µm`;
+  $("#zInfo").innerHTML=S.layers.filter((L)=>L.view!=="3d").map((L)=>{ const m=L.meta;
+    if(m.dims.z===1) return `${esc(m.name)}: single plane, shown at every z`;
+    const t=(S.z2d-m.origin_um[2])/m.voxel_um[2];
+    const k2=Math.max(0,Math.min(m.dims.z-1,Math.floor(t)));
+    return `${esc(m.name)}: plane ${k2+1} of ${m.dims.z}${(t<0||t>=m.dims.z)?" (nearest to this z)":""}`; }).join("<br>");
+  requestDraw(); }
+function fit2D(){ const {mn,mx}=bounds(), cw=Math.max(canvas.clientWidth,1), ch=Math.max(canvas.clientHeight,1);
+  S.v2={cx:(mn[0]+mx[0])/2, cy:(mn[1]+mx[1])/2, upp:1.08*Math.max((mx[0]-mn[0])/cw,(mx[1]-mn[1])/ch)}; requestDraw(); }
+// switching keeps the place: the 3D camera's target and scale become the 2D centre and scale
+function set2D(on){
+  on=!!on; if(on===S.mode2d) return;
+  const th=2*Math.tan(S.fov/2), ch=Math.max(canvas.clientHeight,1);
+  if(on){ const t=S.cam.target; S.v2={cx:t[0], cy:-t[1], upp:Math.max(0.01,th*S.cam.dist/ch)}; S.vel.az=S.vel.el=0; }
+  else { const {mn,mx}=bounds(); S.cam.target=[S.v2.cx,-S.v2.cy,(mn[2]+mx[2])/2*S.zScale];
+    S.cam.dist=S.v2.upp*ch/th; S.cam.az=0; S.cam.el=Math.PI/2-0.002; }
+  S.mode2d=on; $("#m2d").classList.toggle("on",on); $("#m3d").classList.toggle("on",!on);
+  $("#ctl2d").hidden=!on; $("#ctl3d").hidden=on; $("#help").innerHTML=on?HELP2:HELP3;
+  renderLayers(); syncZ(); requestDraw(); }
+// a layer made for one view only is drawn, and listed, in that view.  A picture layer (a stained
+// slide, a DAPI scan) is the exception: it is flat by construction — drawn as the image itself, never
+// ray-marched — so it stays on in the 3D view too, lying at its own z under the map above it.
+function isPicture(L){ return L.meta.kind==="rgb"; }
+function inView(L){ return !L.view || (L.view==="2d")===S.mode2d || isPicture(L); }
+// 3D needs something with depth: a section of single planes (Visium HD, Stereo-seq, a 2D Xenium or
+// MERFISH run) is a 2D dataset whatever its platform, so the 3D button is switched off for it and the
+// view drops to the 2D slice.  The test is the data — a deeper layer ticked later turns 3D back on.
+// images are drawn in the 2D slice only, so their depth does not make a 3D view worth offering:
+// 3D needs a layer that is actually drawn there — a map or a segmentation with more than one plane
+function has3D(){ return S.layers.some((L)=>L.meta.dims&&L.meta.dims.z>1&&L.view!=="2d"); }
+function syncViewButtons(){
+  const ok=has3D(), b=$("#m3d");
+  b.disabled=!ok; b.style.opacity=ok?1:0.4; b.style.cursor=ok?"pointer":"not-allowed";
+  b.title=ok?"The volume, rotatable":"This dataset is a single plane: there is no 3D view";
+  if(S.viewPicked) return;
+  // the flat layers of a dataset can arrive before its deep ones, so the drop to 2D is undone as
+  // soon as something with depth is loaded — a view the visitor chose is never overridden
+  if(!ok&&!S.mode2d&&S.layers.length){ set2D(true); S.autoFlat=true; }
+  else if(ok&&S.mode2d&&S.autoFlat){ set2D(false); S.autoFlat=false; } }
+function draw2D(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  const W=Math.max(1,Math.floor(canvas.clientWidth*dpr)), H=Math.max(1,Math.floor(canvas.clientHeight*dpr));
+  if(canvas.width!==W||canvas.height!==H){canvas.width=W;canvas.height=H;}
+  gl.viewport(0,0,W,H);
+  if(S.light) gl.clearColor(0.96,0.96,0.95,1); else gl.clearColor(0.055,0.063,0.078,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  gl.bindVertexArray(quadVAO);
+  const V=S.v2, upc=V.upp*canvas.clientWidth/W;
+  // every sheet is drawn from the quad; a shapes pass leaves its own buffers bound, and an image drawn
+  // through those would come out as nothing at all
+  const use=(P)=>{ gl.useProgram(P.p); gl.bindVertexArray(quadVAO);
+    gl.uniform3f(P.u.uView,V.cx,V.cy,upc); gl.uniform2f(P.u.uCanvas,W,H); return P.u; };
+  const sheet=(u,x0,y0,x1,y1,ox,oy,vx,vy)=>{ gl.uniform4f(u.uRect,x0,y0,x1,y1);
+    gl.uniform2f(u.uOrg,ox,oy); gl.uniform2f(u.uVox,vx,vy); gl.drawArrays(gl.TRIANGLES,0,6); };
+  // this layer's plane at the chosen z; outside its own stack it draws its nearest plane, so a layer
+  // is never missing just because another layer set a deeper z ladder
+  const planeOf=(m)=>{ if(m.dims.z===1) return 0;
+    const t=(S.z2d-m.origin_um[2])/m.voxel_um[2];
+    return Math.max(0, Math.min(m.dims.z-0.001, t)); };
+  const whole=(u,m)=>{ const v=m.voxel_um, o=m.origin_um;
+    sheet(u,o[0],o[1],o[0]+m.dims.x*v[0],o[1]+m.dims.y*v[1],o[0],o[1],v[0],v[1]); };
+  const tiles=(L,u,bind)=>{ const m=L.meta, v=m.voxel_um, o=m.origin_um;
+    for(const T of L.tiles){
+      if(T.state==="empty") continue; const full=T.state==="ready"; if(!full&&!L.ov) continue;
+      const x0=o[0]+T.x0*v[0], y0=o[1]+T.y0*v[1];
+      // until a tile arrives its rectangle is read from the overview
+      const fx=full?1:(m.kind==="rgb"?m.dims.x/L.ov.w:L.ov.factor), fy=full?1:(m.kind==="rgb"?m.dims.y/L.ov.h:L.ov.factor);
+      bind(full?T.tex:L.ov.tex);
+      sheet(u,x0,y0,x0+T.w*v[0],y0+T.h*v[1], full?x0:o[0], full?y0:o[1], v[0]*fx, v[1]*fy); } };
+  const vis=S.layers.filter((L)=>L.visible&&inView(L));
+  for(const L of vis.filter((L)=>L.meta.kind==="rgb")){
+    const u=use(P2_RGB); gl.uniform1f(u.uAlpha,L.opacity); gl.uniform1i(u.uKey,L.keyWhite?(L.keyMode||1):0);
+    gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
+    tiles(L,u,(t)=>gl.bindTexture(gl.TEXTURE_2D,t)); }
+  for(const L of vis.filter((L)=>L.meta.kind==="labels")){
+    if(L.mode==="solid"&&L.solid&&L.solid.kind==="solidtiles"){
+      const sm=L.solid, t=planeOf(sm); if(t===null||!L.sov||!L.sov.tex) continue;
+      const te=L.envelope&&L.solidVol.get("tissue");
+      if(te){ const ue=use(P2_SOLID); gl.uniform1f(ue.uZ,sm.dims.z===1?0.5:t); gl.uniform1f(ue.uIso,L.solidIso);
+        gl.uniform1i(ue.uVol,0); gl.uniform3fv(ue.uColor,[0.72,0.75,0.8]); gl.uniform1f(ue.uAlpha,0.22);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY,te.tex); whole(ue,sm.tissue); }
+      const u=use(P2_SOLIDT);
+      gl.uniform1f(u.uZ,sm.dims.z===1?0.5:t); gl.uniform1f(u.uIso,L.solidIso); gl.uniform1f(u.uAlpha,L.opacity);
+      gl.uniform1i(u.uKeyed,sm.channels===3?1:0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,L.pal); gl.uniform1i(u.uPal,1);
+      gl.uniform1i(u.uVol,0); gl.activeTexture(gl.TEXTURE0);
+      const v=sm.voxel_um, o=sm.origin_um;
+      for(const T of L.stiles||[]){
+        if(T.state==="empty") continue; const full=T.state==="ready", f=full?1:L.sov.factor;
+        const x0=o[0]+T.x0*v[0], y0=o[1]+T.y0*v[1];
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, full?T.tex:L.sov.tex);
+        sheet(u,x0,y0,x0+T.w*v[0],y0+T.h*v[1], full?x0:o[0], full?y0:o[1], v[0]*f, v[1]*f); }
+      continue; }
+    if(L.mode==="solid"){
+      const sm=L.solid; if(!sm) continue; const t=planeOf(sm); if(t===null) continue;
+      const u=use(P2_SOLID);
+      gl.uniform1f(u.uZ,sm.dims.z===1?0.5:t); gl.uniform1f(u.uIso,L.solidIso);
+      gl.uniform1i(u.uVol,0); gl.activeTexture(gl.TEXTURE0);
+      const one=(vol,rgb,a)=>{ if(!vol) return; gl.uniform3fv(u.uColor,rgb); gl.uniform1f(u.uAlpha,a);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY,vol.tex); whole(u,sm); };
+      if(L.envelope) one(L.solidVol.get("tissue"),[0.72,0.75,0.8],0.22);
+      for(const c of sm.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(c.color),L.opacity);
+      continue; }
+    const t=planeOf(L.meta); if(t===null) continue;
+    const u=use(P2_LABEL); gl.uniform1i(u.uPlane,Math.floor(t)); gl.uniform1f(u.uAlpha,L.opacity);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,L.pal); gl.uniform1i(u.uPal,1);
+    gl.uniform1i(u.uVol,0); gl.activeTexture(gl.TEXTURE0);
+    if(L.tiled) tiles(L,u,(tx)=>gl.bindTexture(gl.TEXTURE_2D_ARRAY,tx));
+    else { gl.bindTexture(gl.TEXTURE_2D_ARRAY,L.tex); whole(u,L.meta); } }
+  const shape2D=(L,fill)=>{ const m=L.meta, u=P_LINE2.u;
+    gl.useProgram(P_LINE2.p); gl.uniform3f(u.uView,V.cx,V.cy,upc); gl.uniform2f(u.uCanvas,W,H);
+    gl.uniform2f(u.uOrg,m.origin_um[0],m.origin_um[1]); gl.uniform1f(u.uQ,m.q); lineUniforms(u,L,fill);
+    gl.bindVertexArray(fill?L.fillGeo.vao:L.lines.vao);
+    gl.drawElements(fill?gl.TRIANGLES:gl.LINE_LOOP,fill?L.fillGeo.count:L.lines.count,gl.UNSIGNED_INT,0); };
+  for(const L of vis.filter((L)=>L.meta.kind==="shapes"&&L.fill&&L.fillGeo)) shape2D(L,true);
+  for(const L of vis.filter((L)=>L.meta.kind==="intensity")){
+    const m=L.meta, t=planeOf(m); if(t===null) continue;
+    const u=use(P2_INT); gl.uniform1i(u.uPlane,Math.floor(t)); gl.uniform1f(u.uAlpha,L.opacity);
+    gl.uniform1f(u.uIso,L.iso); gl.uniform3fv(u.uColor,hexRGB(L.color)); gl.uniform1i(u.uVol,0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY,L.tex); whole(u,m); }
+  for(const L of vis.filter((L)=>L.meta.kind==="shapes"&&L.lines&&L.outline)) shape2D(L,false);
+  drawGenes2D(V,upc,W,H);
+  gl.bindVertexArray(quadVAO);
+  gl.disable(gl.BLEND);
+  overlays();
+}
+function frame(){
+  if(!S.mode2d && !drag && !pinch && (Math.abs(S.vel.az)>2e-4||Math.abs(S.vel.el)>2e-4)){
+    S.cam.az+=S.vel.az;
+    S.cam.el=Math.max(-Math.PI/2+0.002,Math.min(Math.PI/2-0.002,S.cam.el+S.vel.el));
+    S.vel.az*=0.9; S.vel.el*=0.9; requestDraw(true); }
+  if(dirty){dirty=false;draw();}
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------- interaction
+const ptrs=new Map(); let drag=null, pinch=null;
+function pointUnder(x,y){ const {eye,fwd,right,up}=camBasis();
+  const th=Math.tan(S.fov/2), asp=canvas.clientWidth/canvas.clientHeight;
+  const nx=(2*x/canvas.clientWidth-1)*th*asp, ny=(1-2*y/canvas.clientHeight)*th;
+  const dir=norm(add(fwd,add(scl(right,nx),scl(up,ny))));
+  if(Math.abs(dir[2])<1e-6) return null;
+  const t=(S.cam.target[2]-eye[2])/dir[2];
+  return t>0?add(eye,scl(dir,t)):null; }
+function focusAt(x,y,quiet){ if(S.mode2d||(quiet&&!S.orbitCursor)) return;
+  const p=pointUnder(x,y); if(!p) return;
+  const {eye}=camBasis(), d=sub(eye,p), dist=Math.hypot(...d);
+  if(!(dist>1e-3)) return;
+  S.cam.target=p; S.cam.dist=Math.max(1,dist);
+  S.cam.el=Math.asin(Math.max(-1,Math.min(1,d[2]/dist)));
+  S.cam.az=Math.atan2(d[0],-d[1]); requestDraw(); }
+function pan(dx,dy){ if(S.mode2d){ S.v2.cx-=dx*S.v2.upp; S.v2.cy-=dy*S.v2.upp; return; }
+  const {right,up}=camBasis();
+  const w=S.cam.dist*2*Math.tan(S.fov/2)/canvas.clientHeight;
+  const d=add(scl(right,-dx*w),scl(up,dy*w));
+  S.cam.target=[S.cam.target[0]+d[0],S.cam.target[1]+d[1],S.cam.target[2]+d[2]]; }
+function zoomAt(x,y,f){
+  if(S.mode2d){ const V=S.v2, hx=canvas.clientWidth/2, hy=canvas.clientHeight/2;   // keep the point under the cursor
+    const px=V.cx+(x-hx)*V.upp, py=V.cy+(y-hy)*V.upp, nu=Math.min(400,Math.max(0.01,V.upp*f));
+    V.cx=px-(x-hx)*nu; V.cy=py-(y-hy)*nu; V.upp=nu; return; }
+  const c=S.cam, {eye,fwd,right,up}=camBasis();
+  const th=Math.tan(S.fov/2), asp=canvas.clientWidth/canvas.clientHeight;
+  const nx=(2*x/canvas.clientWidth-1)*th*asp, ny=(1-2*y/canvas.clientHeight)*th;
+  const dir=norm(add(fwd,add(scl(right,nx),scl(up,ny))));
+  const nd=Math.min(200000,Math.max(1,c.dist*f)); f=nd/c.dist;
+  if(Math.abs(dir[2])>1e-6){ const t=(c.target[2]-eye[2])/dir[2];
+    if(t>0){ const P=add(eye,scl(dir,t));
+      c.target=[P[0]+(c.target[0]-P[0])*f, P[1]+(c.target[1]-P[1])*f, c.target[2]]; } }
+  c.dist=nd; }
+canvas.addEventListener("contextmenu",(e)=>e.preventDefault());
+canvas.addEventListener("pointerdown",(e)=>{
+  canvas.setPointerCapture(e.pointerId); S.vel.az=S.vel.el=0;
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const r=canvas.getBoundingClientRect();
+  if(ptrs.size===1){ const p=S.mode2d||e.button===1||e.button===2||e.shiftKey||e.ctrlKey;
+    if(!p) focusAt(e.clientX-r.left,e.clientY-r.top,true);
+    drag={x:e.clientX,y:e.clientY,pan:p}; }
+  if(ptrs.size===2){ const [a,b]=[...ptrs.values()];
+    pinch={d:Math.hypot(a.x-b.x,a.y-b.y),mx:(a.x+b.x)/2,my:(a.y+b.y)/2}; drag=null; }
+  canvas.classList.add("dragging"); });
+canvas.addEventListener("pointermove",(e)=>{
+  const r=canvas.getBoundingClientRect(); S.cursor=[e.clientX-r.left,e.clientY-r.top];
+  if(!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size===2&&pinch){ const [a,b]=[...ptrs.values()];
+    const d=Math.hypot(a.x-b.x,a.y-b.y), mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    zoomAt(mx-r.left,my-r.top,pinch.d/Math.max(d,1)); pan(mx-pinch.mx,my-pinch.my);
+    pinch={d,mx,my}; requestDraw(true); return; }
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if(drag.pan){ pan(dx,dy); S.vel.az=S.vel.el=0; }
+  else { const R=0.0065; S.cam.az-=dx*R;
+    S.cam.el=Math.max(-Math.PI/2+0.002,Math.min(Math.PI/2-0.002,S.cam.el+dy*R));
+    S.vel.az=-dx*R*0.85; S.vel.el=dy*R*0.85; }
+  requestDraw(true); });
+function endPtr(e){ ptrs.delete(e.pointerId); if(ptrs.size<2) pinch=null;
+  if(ptrs.size===0){ drag=null; canvas.classList.remove("dragging"); } }
+canvas.addEventListener("pointerup",endPtr); canvas.addEventListener("pointercancel",endPtr);
+canvas.addEventListener("dblclick",(e)=>{ const r=canvas.getBoundingClientRect();
+  focusAt(e.clientX-r.left,e.clientY-r.top,false); });
+canvas.addEventListener("wheel",(e)=>{ e.preventDefault(); const r=canvas.getBoundingClientRect();
+  const dy=e.deltaMode===1?e.deltaY*16:e.deltaY;
+  zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(dy*0.0016)); requestDraw(true); },{passive:false});
+window.addEventListener("keydown",(e)=>{
+  if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT") return;
+  const k=e.key.toLowerCase(), st=(e.shiftKey||S.mode2d)?60:0.07;
+  if(S.mode2d&&(k==="["||k==="]")){ const zs=$("#zplane"); zs.value=+zs.value+(k==="]"?1:-1);
+    zs.dispatchEvent(new Event("input")); return; }
+  const ar={arrowleft:[-1,0],arrowright:[1,0],arrowup:[0,-1],arrowdown:[0,1]}[k];
+  if(ar){ if(e.shiftKey||S.mode2d) pan(-ar[0]*st,-ar[1]*st);
+    else { S.cam.az-=ar[0]*st;
+      S.cam.el=Math.max(-Math.PI/2+0.002,Math.min(Math.PI/2-0.002,S.cam.el-ar[1]*st)); }
+    e.preventDefault(); requestDraw(true); return; }
+  if(k==="+"||k==="=") { zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,0.75); requestDraw(true); }
+  else if(k==="-"||k==="_"){ zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,1/0.75); requestDraw(true); }
+  else if(k==="h"||k==="r"){ S.vel.az=S.vel.el=0; fitAll(); }
+  else if(k==="t") setView("top"); else if(k==="o") setView("oblique"); else if(k==="s") setView("side");
+});
+window.addEventListener("resize",()=>requestDraw());
+new ResizeObserver(()=>requestDraw()).observe(canvas);
+
+// ---------------------------------------------------------------- UI
+// ---- cell-type selection: ONE set of hidden cell-type names for the dataset, so a type switched off
+// disappears from every layer that carries it (voxels, solid surfaces, segmentation), and the panel
+// can be rebuilt at any time without forgetting it
+function applyHidden(){
+  for(const L of S.layers){
+    if(!L.meta.classes||!L.meta.classes.length) continue;
+    L.hidden=new Set(L.meta.classes.filter((c)=>S.hiddenNames.has(c.name)).map((c)=>c.id));
+    palTex(L);
+    if(L.mode==="solid") syncSolid(L).catch((e)=>setStatus(e.message,true)); }
+  for(const r of document.querySelectorAll("#layers .cls")) r.classList.toggle("off",S.hiddenNames.has(r.dataset.name));
+  for(const b of document.querySelectorAll("#layers .clsbar")) syncClsBar(b);
+  requestDraw(); }
+function syncClsBar(bar){
+  const names=JSON.parse(bar.dataset.names), shown=names.filter((n)=>!S.hiddenNames.has(n)).length;
+  bar.querySelector("span").textContent=`${shown} of ${names.length} cell types shown`;
+  bar.querySelector("button").textContent=shown===names.length?"Deselect all":"Select all"; }
+function classList(L){
+  const m=L.meta, box=document.createElement("div"), names=[...new Set(m.classes.map((c)=>c.name))];
+  const bar=document.createElement("div"); bar.className="clsbar"; bar.dataset.names=JSON.stringify(names);
+  bar.innerHTML=`<span class="meta"></span><button title="Show or hide every cell type at once"></button>`;
+  bar.querySelector("button").onclick=()=>{
+    const allShown=names.every((n)=>!S.hiddenNames.has(n));
+    for(const n of names){ if(allShown) S.hiddenNames.add(n); else S.hiddenNames.delete(n); }
+    applyHidden(); };
+  box.appendChild(bar); syncClsBar(bar);
+  const tot=m.classes.reduce((s,c)=>s+c.voxels,0)||1;
+  for(const c of [...m.classes].sort((a,b)=>b.voxels-a.voxels)){
+    const row=document.createElement("div"); row.className="cls"+(S.hiddenNames.has(c.name)?" off":"");
+    row.dataset.name=c.name; row.title="Click to show or hide this cell type in every layer";
+    row.innerHTML=`<span class="sw" style="background:${c.color}"></span><span>${esc(c.name)}</span><span class="pct">${(100*c.voxels/tot).toFixed(1)}%</span>`;
+    row.onclick=()=>{ if(S.hiddenNames.has(c.name)) S.hiddenNames.delete(c.name); else S.hiddenNames.add(c.name);
+      applyHidden(); };
+    box.appendChild(row); }
+  return box; }
+// a 3D segmentation is two layers — its cells (voxels) and their plane-by-plane outlines — listed as
+// ONE box: the outlines are switched on and coloured from the cells' box
+function outlinesFor(L){
+  return L.meta.kind==="labels"&&L.group
+    ? S.layers.find((o)=>o!==L&&o.group===L.group&&o.view===L.view&&o.meta.kind==="shapes") : null; }
+function isCompanion(L){
+  return L.meta.kind==="shapes"&&!!L.group&&
+    S.layers.some((o)=>o!==L&&o.group===L.group&&o.view===L.view&&o.meta.kind==="labels"); }
+function renderLayers(){
+  const box=$("#layers"); box.innerHTML="";
+  S.layers.forEach((L,i)=>{
+    // in the explorer a layer's controls are listed only while its Show box is ticked
+    if(!inView(L)||(S.catalog&&!L.visible)||isCompanion(L)) return;
+    const m=L.meta, d=m.dims, v=m.voxel_um;
+    const el=document.createElement("div"); el.className="layer";
+    el.innerHTML=`<div class="top">
+        <input type="checkbox" ${L.visible?"checked":""} title="visible">
+        <span class="nm">${m.name}</span>
+        <button title="remove">x</button>
+      </div>
+      <div class="meta">${m.kind==="shapes"
+        ? `${m.n_cells.toLocaleString()} outlines &middot; ${m.n_vertices.toLocaleString()} vertices (steps under ${m.simplify_um} &micro;m simplified)`
+        : `${d.x} &times; ${d.y} &times; ${d.z} &middot; ${v.map((x)=>+(+x).toFixed(2)).join(" &times; ")} &micro;m voxels${m.tiled?" (full resolution)":""}`} &middot; ${(m.bytes/1e6).toFixed(1)} MB</div>`;
+    const [chk,,btn]=el.querySelectorAll("input,span,button");
+    if(S.catalog){ chk.hidden=true; btn.hidden=true; }   // visibility belongs to the Show boxes
+    chk.onchange=()=>{L.visible=chk.checked;requestDraw();};
+    btn.onclick=()=>{S.layers.splice(i,1);renderLayers();syncViewButtons();requestDraw();};
+    const op=document.createElement("label"); op.className="ctl";
+    op.innerHTML=`opacity<input type="range" min="10" max="100" value="${L.opacity*100}"><span class="v"></span>`;
+    const oi=op.querySelector("input"), ov=op.querySelector("span");
+    const setOp=()=>{L.opacity=+oi.value/100;ov.textContent=oi.value+"%";requestDraw(true);};
+    oi.addEventListener("input",setOp); setOp(); el.appendChild(op);
+    if(m.kind==="intensity"){
+      const iso=document.createElement("label"); iso.className="ctl";
+      iso.innerHTML=`surface at<input type="range" min="5" max="90" value="${L.iso*100}"><span class="v"></span>`;
+      const ii=iso.querySelector("input"), iv=iso.querySelector("span");
+      const setIso=()=>{L.iso=+ii.value/100;iv.textContent=ii.value+"%";requestDraw(true);};
+      ii.addEventListener("input",setIso); setIso(); el.appendChild(iso);
+      const col=document.createElement("div"); col.className="row";
+      col.innerHTML=`<span class="meta">colour</span>`;
+      for(const c of ["#9fd0ff","#ffffff","#63d471","#ff6b6b","#ffd166"]){
+        const b=document.createElement("span"); b.className="sw"; b.style.background=c;
+        b.style.cursor="pointer"; b.onclick=()=>{L.color=c;requestDraw();}; col.appendChild(b); }
+      el.appendChild(col);
+    } else if(m.kind==="shapes"){
+      const hasCls=!!(m.classes&&m.classes.length);
+      const tog=(label,get,set)=>{ const lb=document.createElement("label"); lb.className="show";
+        lb.innerHTML=`<input type="checkbox" ${get()?"checked":""}> ${label}`;
+        const i=lb.querySelector("input"); i.onchange=()=>{set(i.checked);requestDraw();}; el.appendChild(lb); };
+      if(L.fillGeo){                          // how the cells are drawn: their outlines, or filled
+        const rm=document.createElement("div"); rm.className="row"; rm.style.margin="7px 0 3px";
+        rm.innerHTML=`<button class="${L.fill?"":"on"}" title="Polygon outlines only">Outlines only</button><button class="${L.fill?"on":""}" title="Cells filled with their cell type's colour">Filled</button>`;
+        const [bo,bf]=rm.querySelectorAll("button");
+        bo.onclick=()=>{ L.fill=false; L.outline=true; renderLayers(); requestDraw(); };
+        bf.onclick=()=>{ L.fill=true; renderLayers(); requestDraw(); };
+        el.appendChild(rm);
+      }
+      if(L.fill){                             // outlines on or off only matter over a fill
+        if(hasCls) tog("Fill colour by cell type",()=>L.fillByClass,(v)=>{L.fillByClass=v;});
+        tog("Outline",()=>L.outline,(v)=>{L.outline=v;});
+      }
+      const col=document.createElement("div"); col.className="row";
+      col.innerHTML=`<span class="meta">outline colour</span>`;
+      for(const c of ["#ffffff","#000000","#ffd166","#63d471","#ff6b6b","#6aa8ff"]){
+        const b=document.createElement("span"); b.className="sw"; b.style.background=c; b.style.cursor="pointer";
+        b.onclick=()=>{L.color=c;L.byClass=false;renderLayers();requestDraw();}; col.appendChild(b); }
+      el.appendChild(col);
+      if(hasCls){
+        tog("Outline colour by cell type",()=>L.byClass,(v)=>{L.byClass=v;});
+        el.appendChild(classList(L));
+      }
+    } else if(m.kind==="rgb"){
+      const kw=document.createElement("label"); kw.className="show";
+      kw.innerHTML=`<input type="checkbox" ${L.keyWhite?"checked":""}> Hide the ${L.keyMode===2?"dark background":"white slide background"}`;
+      const kc=kw.querySelector("input"); kc.onchange=()=>{L.keyWhite=kc.checked;requestDraw();};
+      el.appendChild(kw);
+    } else if(m.classes){
+      if(L.canSolid){
+        const rm=document.createElement("div"); rm.className="row"; rm.style.margin="7px 0 3px";
+        rm.innerHTML=`<button class="${L.mode==="voxel"?"on":""}">Voxels</button><button class="${L.mode==="solid"?"on":""}">Solid surfaces</button>`;
+        const [bv,bs]=rm.querySelectorAll("button");
+        bv.onclick=()=>{ L.picked=true; L.mode="voxel"; repump(L); renderLayers(); requestDraw(); };
+        bs.onclick=()=>{ L.picked=true; L.mode="solid"; repump(L); renderLayers(); requestDraw();
+          (L.solid?syncSolid(L):ensureSolid(L)).catch((e)=>setStatus(e.message,true)); };
+        el.appendChild(rm);
+        if(L.mode==="solid"){
+          const iso=document.createElement("label"); iso.className="ctl";
+          const st=L.solid&&L.solid.kind==="solidtiles";
+          iso.innerHTML=`surface at<input type="range" min="${st?50:5}" max="${st?95:90}" value="${Math.round(L.solidIso*100)}"><span class="v"></span>`;
+          const ii=iso.querySelector("input"), iv=iso.querySelector("span");
+          const setIso=()=>{L.solidIso=+ii.value/100;iv.textContent=ii.value+"%";requestDraw(true);};
+          ii.addEventListener("input",setIso); setIso(); el.appendChild(iso);
+          const env=document.createElement("label"); env.className="show";
+          env.innerHTML=`<input type="checkbox" ${L.envelope?"checked":""}> Tissue envelope (translucent)`;
+          const ec=env.querySelector("input");
+          ec.onchange=()=>{ L.envelope=ec.checked; syncSolid(L).catch((e)=>setStatus(e.message,true)); requestDraw(); };
+          el.appendChild(env);
+          const note=document.createElement("div"); note.className="meta"; note.style.margin="2px 0 6px";
+          note.textContent=L.solidNote||(L.solid&&L.solid.kind==="solidtiles"
+            ? (L.solid.channels===3
+              ? `Every cell as its own smooth surface (smoothing ${L.solid.sigma_um[0]} µm), coloured by its cell type. Raise "surface at" to shrink the cells apart.`
+              : `The voxel map with its steps rounded off (smoothing ${L.solid.sigma_um[0]} µm): the same cells as the voxel view. Raise "surface at" to thin the surfaces.`)
+            : `Iso-surface through each cell type's smoothed occupancy (${L.solid?L.solid.sigma_um[0]:8} µm). Structure reads here; counts and single cells belong to the voxel view.`);
+          el.appendChild(note);
+        }
+      }
+      const C=outlinesFor(L);
+      if(C&&C.lines){
+        const lb=document.createElement("label"); lb.className="show";
+        lb.innerHTML=`<input type="checkbox" ${C.outline?"checked":""}> Cell outlines${L.mode==="solid"?" (hidden while solid)":""}`;
+        const ci=lb.querySelector("input"); ci.onchange=()=>{ C.outline=ci.checked; renderLayers(); requestDraw(); };
+        el.appendChild(lb);
+        if(C.outline){
+          const col=document.createElement("div"); col.className="row";
+          col.innerHTML=`<span class="meta">outline colour</span>`;
+          for(const c of ["#ffffff","#000000","#ffd166","#63d471","#ff6b6b","#6aa8ff"]){
+            const b=document.createElement("span"); b.className="sw"; b.style.background=c; b.style.cursor="pointer";
+            b.onclick=()=>{ C.color=c; C.byClass=false; renderLayers(); requestDraw(); }; col.appendChild(b); }
+          el.appendChild(col);
+          const bl=document.createElement("label"); bl.className="show";
+          bl.innerHTML=`<input type="checkbox" ${C.byClass?"checked":""}> Outline colour by cell type`;
+          const bi=bl.querySelector("input"); bi.onchange=()=>{ C.byClass=bi.checked; requestDraw(); };
+          el.appendChild(bl);
+        }
+      }
+      el.appendChild(classList(L));
+    }
+    box.appendChild(el);
+  });
+  $("#layersHead").hidden=!box.children.length;
+}
+function itemRow(cls,label,meta,onClick){
+  const d=document.createElement("div"); d.className="item "+cls;
+  d.innerHTML=`<div><div class="nm">${label}</div><div class="meta">${meta||""}</div></div>`;
+  const b=document.createElement("button"); b.textContent=cls==="dir"?"open":"add";
+  b.onclick=(e)=>{e.stopPropagation();onClick();}; d.appendChild(b);
+  if(cls==="dir") d.onclick=onClick;
+  return d;
+}
+async function browse(dir){
+  const j=await api(`/api/browse?dir=${encodeURIComponent(dir)}`);
+  S.dir=j.dir; $("#where").textContent=j.dir; $("#path").value=j.dir;
+  const box=$("#browser"); box.innerHTML="";
+  for(const s of j.stores) box.appendChild(itemRow("store",s+"  (zarr)","open this store",()=>openStore(j.dir+"/"+s)));
+  for(const d of j.dirs) box.appendChild(itemRow("dir",d,"",()=>browse(j.dir+"/"+d)));
+  $("#up").onclick=()=>browse(j.parent);
+}
+async function openStore(path){
+  setStatus("reading "+path+" ...");
+  const inv=await api(`/api/inventory?path=${encodeURIComponent(path)}`);
+  S.store=inv; $("#where").textContent=path; $("#path").value=path;
+  const box=$("#elements"); box.innerHTML="";
+  for(const e of inv.elements){
+    const meta=[e.shape?e.shape.join(" x "):"", e.dtype||"", e.note||""].filter(Boolean).join(" · ");
+    if(!e.renderable){ const d=document.createElement("div"); d.className="item";
+      d.innerHTML=`<div><div class="nm" style="color:var(--muted)">${e.group}/${e.name}</div><div class="meta">${meta}</div></div><span class="meta">—</span>`;
+      box.appendChild(d); continue; }
+    box.appendChild(itemRow("el",`${e.group}/${e.name}`,meta,async()=>{
+      const stride=$("#stride").value;
+      const q=new URLSearchParams({path, group:e.group, element:e.name, stride});
+      if(e.um_per_px_guess && e.group!=="ssaft") q.set("um_per_px", e.um_per_px_guess);
+      try { setStatus(`building ${e.group}/${e.name} ...`); await addLayer(await api("/api/layer?"+q)); }
+      catch(err){ setStatus(err.message,true); }
+    }));
+  }
+  setStatus(`${inv.store} store, ${inv.elements.length} elements`);
+}
+$("#open").onclick=async()=>{ const p=$("#path").value.trim();
+  try { p.endsWith(".zarr")||p.includes(".zarr/") ? await openStore(p) : await browse(p); }
+  catch(e){ try { await openStore(p); } catch(e2){ setStatus(e2.message,true); } } };
+$("#addTif").onclick=async()=>{
+  const q=new URLSearchParams({file:$("#tifPath").value.trim(), level:$("#tifLevel").value,
+                               z_um:$("#tifZ").value, stride:"1"});
+  try { setStatus("reading the image stack ..."); await addLayer(await api("/api/tif?"+q)); }
+  catch(e){ setStatus(e.message,true); } };
+for(const b of document.querySelectorAll("[data-view]")) b.onclick=()=>setView(b.dataset.view);
+$("#m2d").onclick=()=>{ S.viewPicked=true; set2D(true); };
+$("#m3d").onclick=()=>{ if(has3D()){ S.viewPicked=true; set2D(false); } };
+$("#zplane").addEventListener("input",()=>{ const g=zGrid(); if(!g) return;
+  S.zPicked=true; S.z2d=g.lo+(+$("#zplane").value+0.5)*g.step; syncZ(); });
+$("#home").onclick=fitAll; $("#fit").onclick=fitAll;
+$("#zin").onclick=()=>{zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,0.7);requestDraw(true);};
+$("#zout").onclick=()=>{zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,1/0.7);requestDraw(true);};
+// the screenshot is the canvas itself, so the scale bar (a DOM overlay) is painted into a copy of it
+function withScaleBar(src){
+  const sb=scaleBar(), k=src.width/Math.max(canvas.clientWidth,1);   // CSS px -> image px
+  const out=document.createElement("canvas"); out.width=src.width; out.height=src.height;
+  const c=out.getContext("2d"); c.drawImage(src,0,0);
+  const w=sb.px*k, h=Math.max(3,4*k), pad=18*k, font=Math.round(13*k);
+  const x=pad, y=src.height-pad-h, ink=S.light?"#111418":"#ffffff";
+  c.font=`600 ${font}px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif`;
+  const tw=c.measureText(sb.label).width, bw=Math.max(w,tw)+16*k, bh=h+font+22*k;
+  c.fillStyle=S.light?"rgba(255,255,255,0.78)":"rgba(0,0,0,0.45)";      // a pad, so the bar reads on any tissue
+  c.fillRect(x-8*k, y-font-14*k, bw, bh);
+  c.fillStyle=ink; c.fillRect(x,y,w,h);
+  c.textBaseline="alphabetic"; c.fillText(sb.label, x+(w-tw)/2, y-6*k);
+  return out; }
+$("#shot").onclick=()=>{ draw();
+  const img=$("#shotScale").checked?withScaleBar(canvas):canvas;
+  img.toBlob((b)=>{ const a=document.createElement("a");
+    a.href=URL.createObjectURL(b); a.download=S.mode2d?"ssaft_2d.png":"ssaft_3d.png"; a.click(); }); };
+$("#orbitCursor").onchange=(e)=>{S.orbitCursor=e.target.checked;};
+$("#light").onchange=(e)=>{S.light=e.target.checked;requestDraw();};
+{ const z=$("#zscale"), zv=$("#zscaleV");
+  const upd=()=>{ const b=bounds(), frac=S.cam.target[2]/Math.max((b.mn[2]+b.mx[2])/2*S.zScale,1e-6);
+    S.zScale=+z.value; zv.textContent=z.value+"x";
+    S.cam.target[2]=(b.mn[2]+b.mx[2])/2*S.zScale; requestDraw(true); };
+  z.addEventListener("input",upd); upd();
+  $("#scale1").onclick=()=>{z.value=1;z.dispatchEvent(new Event("input"));}; }
+
+// ---------------------------------------------------------------- solid surfaces
+const SOLID_BS=8;
+function texU8RG(data,w,h,d,ch){
+  const c3=ch===3;
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY,t); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,c3?gl.RGB8UI:gl.RG8UI,w,h,d,0,c3?gl.RGB_INTEGER:gl.RG_INTEGER,gl.UNSIGNED_BYTE,data);
+  for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,gl.NEAREST],[gl.TEXTURE_MAG_FILTER,gl.NEAREST],
+    [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_R,gl.CLAMP_TO_EDGE]])
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY,k,v);
+  S.bytes+=w*h*d*(c3?3:2); return t; }
+// per block: the classes that reach occupancy 0.5 in it or within one voxel of it (the surface is
+// interpolated across voxels, so a block is skipped only when its neighbours' edge voxels agree)
+function occTexSolid(data,w,h,d,bs,ch){
+  const st=ch===3?3:2;              // (key, occupancy[, class]): the class decides visibility
+  const bw=Math.ceil(w/bs), bh=Math.ceil(h/bs), occ=new Uint32Array(bw*bh*2);
+  const mark=(bx,by,id)=>{ if(bx<0||by<0||bx>=bw||by>=bh) return; const k=(by*bw+bx)*2;
+    if(id<64) occ[k+(id>>5)]|=1<<(id&31); else { occ[k]=0xFFFFFFFF; occ[k+1]=0xFFFFFFFF; } };
+  let i=0;
+  for(let z=0;z<d;z++) for(let y=0;y<h;y++){
+    const by=(y/bs)|0, ey=y%bs, y0=ey===0?by-1:by, y1=ey===bs-1?by+1:by;
+    for(let x=0;x<w;x++,i+=st){ const id=st===3?data[i+2]:data[i]; if(!data[i]||!id||data[i+1]<128) continue;
+      const bx=(x/bs)|0, ex=x%bs, x0=ex===0?bx-1:bx, x1=ex===bs-1?bx+1:bx;
+      for(let yy=y0;yy<=y1;yy++) for(let xx=x0;xx<=x1;xx++) mark(xx,yy,id); } }
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RG32UI,bw,bh,0,gl.RG_INTEGER,gl.UNSIGNED_INT,occ);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  return t; }
+function pumpSolidTiles(L){
+  if(!S.layers.includes(L)||!L.stiles||!L.visible||L.mode!=="solid") return;
+  const m=L.solid, need=(T)=>T.w*T.h*m.dims.z*(m.channels===3?3:2);
+  const queue=L.stiles.filter((t)=>t.state==="none").sort((a,b)=>tileDist(m,a)-tileDist(m,b));
+  while(L.stilesBusy<2&&queue.length){
+    if(!makeRoom(m,queue[0],need(queue[0]))){ budgetNote(); break; }
+    const T=queue.shift(); T.state="loading"; L.stilesBusy++;
+    fetchGz(T.file).then((data)=>{
+      if(!S.layers.includes(L)) return;
+      const b0=S.bytes; T.tex=texU8RG(data,T.w,T.h,m.dims.z,m.channels); T.occ=occTexSolid(data,T.w,T.h,m.dims.z,16,m.channels);
+      T.bytes=S.bytes-b0; T.state="ready"; gpuCheck();
+      if(!L.visible||L.mode!=="solid") freeTile(T);
+    }).catch((e)=>{ T.tries=(T.tries||0)+1; T.state=T.tries<3?"none":"error"; if(T.state==="error") setStatus("solid tile: "+e.message,true); })
+      .finally(()=>{ L.stilesBusy--; requestDraw(); pumpSolidTiles(L); });
+  } }
+function blockMaxTexture(data,w,h,d,bs){
+  const bw=Math.ceil(w/bs), bh=Math.ceil(h/bs), mx=new Uint8Array(bw*bh);
+  let i=0;
+  for(let z=0;z<d;z++) for(let y=0;y<h;y++){ const row=((y/bs)|0)*bw;
+    for(let x=0;x<w;x++,i++){ const k=row+((x/bs)|0); if(data[i]>mx[k]) mx[k]=data[i]; } }
+  const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,bw,bh,0,gl.RED,gl.UNSIGNED_BYTE,mx);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  return t; }
+async function ensureSolid(L){
+  if(L.solid||L.solidWait) return;
+  L.solidWait=true;
+  try{
+    for(;;){                              // the server builds in the background; show its progress
+      const r=await fetch(`/api/dataset_solid?id=${encodeURIComponent(L.ds)}&key=${encodeURIComponent(L.meta.key)}`);
+      const j=await r.json();
+      if(j.error) throw new Error(j.error);
+      if(j.status!=="building"){ L.solid=j; L.solidNote=""; if(j.iso) L.solidIso=j.iso; break; }
+      L.solidNote=`Preparing solid surfaces on the server ... ${j.total?Math.round(100*j.done/j.total):0}%`;
+      if(L.mode==="solid") renderLayers();
+      await new Promise((ok)=>setTimeout(ok,2000));
+    }
+  } finally { L.solidWait=false; }
+  renderLayers(); await syncSolid(L);
+}
+async function loadSolidVol(L,key,file,dims){
+  if(L.solidVol.has(key)) return;
+  L.solidVol.set(key,null);               // placeholder: fetched once
+  try{
+    const dm=dims||L.solid.dims, data=await fetchGz(file);
+    if(!S.layers.includes(L)) return;     // the dataset changed while this was loading
+    L.solidVol.set(key,{ tex:texU8(data,dm.x,dm.y,dm.z,true),
+                         blk:blockMaxTexture(data,dm.x,dm.y,dm.z,SOLID_BS) });
+  }catch(e){ L.solidVol.delete(key); setStatus("solid "+key+": "+e.message,true); }
+  requestDraw();
+}
+async function syncSolid(L){
+  if(L.mode!=="solid"||!L.solid) return;
+  if(L.solid.kind==="solidtiles"){            // one lattice for all classes: overview, then tiles nearest first
+    if(!L.sov){ L.sov="loading";
+      const o=L.solid.overview, data=await fetchGz(o.file);
+      if(!S.layers.includes(L)) return;
+      L.sov={ tex:texU8RG(data,o.w,o.h,L.solid.dims.z,L.solid.channels), occ:occTexSolid(data,o.w,o.h,L.solid.dims.z,4,L.solid.channels), factor:o.factor };
+      L.stiles=L.solid.tiles.map((t)=>({...t, state:t.empty?"empty":"none", tex:null, occ:null})); L.stilesBusy=0; }
+    pumpSolidTiles(L);
+    if(L.envelope&&!L.solidVol.has("tissue")) await loadSolidVol(L,"tissue",L.solid.tissue.file,L.solid.tissue.dims);
+    requestDraw(); return; }
+  const jobs=L.solid.classes.filter((c)=>!L.hidden.has(c.id)&&!L.solidVol.has(c.id))
+                            .map((c)=>loadSolidVol(L,c.id,c.file));
+  if(L.envelope&&!L.solidVol.has("tissue")) jobs.push(loadSolidVol(L,"tissue",L.solid.tissue.file));
+  if(!jobs.length) return;
+  setStatus(`loading ${jobs.length} solid volume(s) ...`);
+  await Promise.all(jobs);
+  setStatus(`${S.layers.length} layer(s), ${(S.bytes/1e6).toFixed(0)} MB on the GPU`); requestDraw();
+}
+
+// ---------------------------------------------------------------- genes
+// The dataset's transcripts, one gene at a time: every gene ticked is drawn as points in its own colour,
+// in 3D and in the 2D slice.  A gene's points are fetched the first time it is ticked and kept, so
+// unticking and ticking again is instant.
+const GENE_COLORS=["#ff4d4d","#4dd2ff","#ffd24d","#7dff4d","#ff4dd2","#ffffff","#ff9f40","#a78bff",
+  "#40ffb0","#ff8fb0","#c8ff40","#4d8cff","#ffc9a8","#b0b0b0","#00c2a8","#ffea00"];
+const GENE_GAIN=1;
+const GS={ ds:null, list:[], n:0, cap:0, on:[], data:new Map(), size:3, alpha:1, plane:false, gen:0, filter:"", dimmed:false,
+           grid:false, gain:1 };  // array platforms have no transcripts: a gene is a grid of bin values
+// in 2D every transcript is drawn by default: one z plane holds only a few percent of them, and a
+// tilted section makes that plane cover only part of the tissue — which reads as missing data
+function dropGenes(){
+  for(const g of GS.data.values()){ if(!g) continue;
+    if(g.vao){ gl.deleteBuffer(g.buf); gl.deleteVertexArray(g.vao); }
+    if(g.tex) gl.deleteTexture(g.tex);
+    S.bytes-=g.bytes||0; }
+  GS.data.clear(); GS.on=[]; GS.list=[]; GS.ds=null; GS.gen++; GS.dimmed=false; $("#geneSection").hidden=true; }
+async function loadGenes(ds){
+  const gen=GS.gen; let j;
+  for(;;){                                   // the server indexes a dataset's transcripts once, in the background
+    const r=await fetch(`/api/genes?id=${encodeURIComponent(ds.id)}`);
+    if(r.status===404) return;               // a server without genes: the section stays hidden
+    j=await r.json(); if(j.error) throw new Error(j.error);
+    if(gen!==GS.gen) return;
+    if(j.status!=="building") break;
+    $("#geneSection").hidden=false; $("#geneNote").textContent="indexing this dataset's transcripts on the server ...";
+    await new Promise((ok)=>setTimeout(ok,1500)); }
+  if(gen!==GS.gen) return;
+  if(!j.genes||!j.genes.length){ $("#geneSection").hidden=true; return; }
+  GS.ds=ds.id; GS.list=j.genes; GS.n=j.n; GS.cap=j.cap; GS.hvg=j.hvg?new Set(j.hvg):null;
+  GS.grid=j.kind==="grid"; GS.why=j.why||"array";
+  $("#geneSection").hidden=false;
+  $("#geneSizeRow").hidden=GS.grid; $("#geneGainRow").hidden=!GS.grid;
+  $("#genePlane").parentElement.hidden=GS.grid;
+  $("#geneNote").textContent=!GS.grid ? ""
+    : GS.why==="array"
+      ? "This platform captures expression per lattice bin, not one transcript at a time, so a gene is drawn as its signal over the bins (the SSAF-T signal genes)."
+      : "This dataset's store keeps no transcript coordinates, so a gene is drawn from the SSAF-T signal field over the map's lattice, not as single transcripts (the SSAF-T signal genes).";
+  renderGenes();
+  const want=(params.get("genes")||"").split(",").filter(Boolean);
+  for(const nm of want) if(GS.list.some((r)=>r[0]===nm)) await setGene(nm,true);
+}
+function geneColor(){ const used=new Set(GS.on.map((nm)=>GS.data.get(nm)?.color).filter(Boolean));
+  return GENE_COLORS.find((c)=>!used.has(c))||GENE_COLORS[GS.on.length%GENE_COLORS.length]; }
+async function fetchGrid(nm){
+  const gen=GS.gen;
+  const m=await api(`/api/gene_grid?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`);
+  const data=await fetchGz(m.file);
+  if(gen!==GS.gen) return null;
+  const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,m.w,m.h,0,gl.RED,gl.UNSIGNED_BYTE,data);
+  for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,gl.NEAREST],[gl.TEXTURE_MAG_FILTER,gl.NEAREST],
+    [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D,k,v);
+  S.bytes+=m.w*m.h;
+  return { tex, meta:m, bytes:m.w*m.h, total:0, count:0 }; }
+async function fetchGene(nm){
+  const gen=GS.gen;
+  const r=await fetch(`/api/gene_points?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`);
+  if(!r.ok){ let m=r.status; try{ m=(await r.json()).error||m; }catch(_){} throw new Error(`${nm}: ${m}`); }
+  const total=+(r.headers.get("X-Count")||0);
+  const raw=new Uint8Array(await new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+  if(gen!==GS.gen) return null;
+  const xyz=new Float32Array(raw.buffer,raw.byteOffset,raw.byteLength>>2);
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.bufferData(gl.ARRAY_BUFFER,xyz,gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0); gl.bindVertexArray(null);
+  S.bytes+=xyz.byteLength;
+  return { vao, buf, count:xyz.length/3, total, bytes:xyz.byteLength }; }
+async function setGene(nm,on){
+  const i=GS.on.indexOf(nm);
+  if(!on){ if(i>=0) GS.on.splice(i,1); renderGenes(); requestDraw(); return; }
+  if(i>=0) return;
+  // the first gene switched on: a fully opaque cell-type map would hide the transcripts inside it
+  if(!GS.on.length&&!GS.dimmed){ GS.dimmed=true; let n=0;
+    for(const L of S.layers) if(L.meta.kind==="labels"&&L.visible&&L.opacity>=1){ L.opacity=0.35; n++; }
+    if(n){ renderLayers(); $("#geneNote").textContent="The cell-type layers were set to 35% opacity so the transcripts show through; change it under Layers."; } }
+  let g=GS.data.get(nm);
+  if(!g){ const color=geneColor(); GS.on.push(nm); renderGenes();
+    setStatus(`loading ${nm} ...`);
+    try{ g=GS.grid?await fetchGrid(nm):await fetchGene(nm); }
+    catch(e){ GS.on=GS.on.filter((x)=>x!==nm); renderGenes(); throw e; }
+    if(!g) return;
+    g.color=color; GS.data.set(nm,g);
+    setStatus(GS.grid ? `${nm}: expression over ${g.meta.w} × ${g.meta.h} bins of ${g.meta.vx} µm`
+                      : `${nm}: ${g.total.toLocaleString()} transcripts${g.count<g.total?`, a random ${g.count.toLocaleString()} drawn`:""}`); }
+  else if(!GS.on.includes(nm)) GS.on.push(nm);
+  renderGenes(); requestDraw(); }
+function renderGenes(){
+  const q=GS.filter.trim().toLowerCase(), match=GS.list.filter((r)=>!q||r[0].toLowerCase().includes(q));
+  // the genes being drawn are listed first, and stay listed while a search is typed: a gene that is
+  // on should never have to be found again by scrolling.  Everything else — the counts, the two
+  // buttons — still works on what the search matches.
+  const chosen=new Set(GS.on);
+  const pinned=GS.list.filter((r)=>chosen.has(r[0]));
+  const rows=pinned.concat(match.filter((r)=>!chosen.has(r[0])));
+  const box=$("#geneList"); box.innerHTML="";
+  const frag=document.createDocumentFragment();
+  for(const [nm,n] of rows.slice(0,1500)){
+    const on=GS.on.includes(nm), g=GS.data.get(nm);
+    const row=document.createElement("label");
+    row.className="gene"+(on?" on":"")+(!on&&pinned.length&&frag.childElementCount===pinned.length?" sep":"");
+    row.innerHTML=`<input type="checkbox" ${on?"checked":""}><span class="sw" style="background:${g?.color||"transparent"}" title="Click for another colour"></span><span>${esc(nm)}${GS.hvg&&!GS.grid&&GS.hvg.has(nm)?' <span class="pct">HVG</span>':""}</span><span class="pct">${n?n.toLocaleString():""}</span>`;
+    row.querySelector("input").onchange=(e)=>setGene(nm,e.target.checked).catch((err)=>setStatus(err.message,true));
+    row.querySelector(".sw").onclick=(e)=>{ if(!g) return; e.preventDefault(); e.stopPropagation();
+      g.color=GENE_COLORS[(GENE_COLORS.indexOf(g.color)+1)%GENE_COLORS.length]; renderGenes(); requestDraw(); };
+    frag.appendChild(row); }
+  box.appendChild(frag);
+  $("#geneCount").textContent=`${GS.on.length} of ${GS.list.length} genes shown${q?` · ${match.length} match`:""}`;
+  const allOn=match.length&&match.every((r)=>GS.on.includes(r[0]));
+  $("#geneAll").textContent=allOn?"Deselect all":(q?"Select all matches":"Select all");
+  $("#geneAll").onclick=async()=>{
+    if(allOn){ const drop=new Set(match.map((r)=>r[0])); GS.on=GS.on.filter((x)=>!drop.has(x)); renderGenes(); requestDraw(); return; }
+    const todo=match.map((r)=>r[0]).filter((x)=>!GS.on.includes(x));
+    for(let k=0;k<todo.length;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
+    setStatus(`${GS.on.length} genes shown`); };
+  // HVG only: exactly the highly variable genes (of the search matches) on, every other gene off
+  const hb=$("#geneHvg"), hv=GS.hvg&&!GS.grid?match.map((r)=>r[0]).filter((x)=>GS.hvg.has(x)):[];
+  hb.hidden=GS.grid;
+  hb.textContent=GS.hvg?`HVG only (${hv.length})`:"HVG only"; hb.disabled=!GS.hvg||!hv.length;
+  hb.style.opacity=hb.disabled?0.4:1; hb.style.cursor=hb.disabled?"not-allowed":"pointer";
+  hb.title=GS.hvg?"Show only the highly variable genes SSAF-T selected for this dataset (with the ontology markers it kept alongside them)"
+                 :"No highly variable gene selection was made for this dataset: SSAF-T used its whole gene panel";
+  hb.onclick=async()=>{ if(hb.disabled) return; const keep=new Set(hv);
+    GS.on=GS.on.filter((x)=>keep.has(x)); renderGenes(); requestDraw();
+    const todo=hv.filter((x)=>!GS.on.includes(x));
+    for(let k=0;k<todo.length;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
+    setStatus(`${GS.on.length} highly variable genes shown`); };
+}
+function geneUniforms(u){ gl.uniform1f(u.uSize,Math.max(1,GS.size*canvas.width/Math.max(canvas.clientWidth,1)));
+  gl.uniform1f(u.uAlpha,GS.alpha); }
+function drawGenes3D(VP,rebase,zw){
+  if(!GS.on.length) return;
+  if(GS.grid){                                   // a sheet per gene, at the map's own height
+    const u=P_GRID3.u; gl.useProgram(P_GRID3.p); gl.bindVertexArray(quadVAO); gl.disable(gl.CULL_FACE);
+    gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform1f(u.uAlpha,GS.alpha); gl.uniform1f(u.uGain,GS.gain);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
+    for(const nm of GS.on){ const g=GS.data.get(nm); if(!g) continue; const m=g.meta;
+      gl.uniform3fv(u.uColor,hexRGB(g.color)); gl.bindTexture(gl.TEXTURE_2D,g.tex);
+      gl.uniform3f(u.uBoxMin, m.ox-rebase[0], -(m.oy+m.h*m.vy)-rebase[1], (m.z1+0.5)*zw);
+      gl.uniform3f(u.uBoxMax, m.ox+m.w*m.vx-rebase[0], -m.oy-rebase[1], (m.z1+0.5)*zw);
+      gl.drawArrays(gl.TRIANGLES,0,6); }
+    gl.depthMask(true); gl.disable(gl.BLEND); gl.enable(gl.CULL_FACE); gl.bindVertexArray(null); return; }
+  const u=P_PT3.u; gl.useProgram(P_PT3.p);
+  gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform2f(u.uOff,-rebase[0],rebase[1]); gl.uniform1f(u.uZW,zw);
+  geneUniforms(u); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  for(const nm of GS.on){ const g=GS.data.get(nm); if(!g) continue;
+    gl.uniform3fv(u.uColor,hexRGB(g.color)); gl.bindVertexArray(g.vao); gl.drawArrays(gl.POINTS,0,g.count); }
+  gl.disable(gl.BLEND); gl.bindVertexArray(null); }
+function drawGenes2D(V,upc,W,H){
+  if(!GS.on.length) return;
+  if(GS.grid){
+    const u=P2_GRID.u; gl.useProgram(P2_GRID.p); gl.bindVertexArray(quadVAO);
+    gl.uniform3f(u.uView,V.cx,V.cy,upc); gl.uniform2f(u.uCanvas,W,H);
+    gl.uniform1f(u.uAlpha,GS.alpha); gl.uniform1f(u.uGain,GS.gain); gl.uniform1i(u.uImg,0);
+    gl.activeTexture(gl.TEXTURE0);
+    for(const nm of GS.on){ const g=GS.data.get(nm); if(!g) continue; const m=g.meta;
+      gl.uniform3fv(u.uColor,hexRGB(g.color)); gl.bindTexture(gl.TEXTURE_2D,g.tex);
+      gl.uniform4f(u.uRect,m.ox,m.oy,m.ox+m.w*m.vx,m.oy+m.h*m.vy);
+      gl.uniform2f(u.uOrg,m.ox,m.oy); gl.uniform2f(u.uVox,m.vx,m.vy);
+      gl.drawArrays(gl.TRIANGLES,0,6); }
+    return; }
+  const u=P_PT2.u; gl.useProgram(P_PT2.p);
+  gl.uniform3f(u.uView,V.cx,V.cy,upc); gl.uniform2f(u.uCanvas,W,H);
+  const g=zGrid(); let lo=-1e30, hi=1e30;
+  if(GS.plane&&g&&S.z2d!=null){ const k=Math.max(0,Math.min(g.n-1,Math.floor((S.z2d-g.lo)/g.step))); lo=g.lo+k*g.step; hi=lo+g.step; }
+  gl.uniform1f(u.uZlo,lo); gl.uniform1f(u.uZhi,hi); geneUniforms(u);
+  for(const nm of GS.on){ const d=GS.data.get(nm); if(!d) continue;
+    gl.uniform3fv(u.uColor,hexRGB(d.color)); gl.bindVertexArray(d.vao); gl.drawArrays(gl.POINTS,0,d.count); } }
+$("#geneFind").addEventListener("input",(e)=>{ GS.filter=e.target.value; renderGenes(); });
+{ const sz=$("#geneSize"), al=$("#geneAlpha"), gn=$("#geneGain");
+  const upd=()=>{ GS.size=+sz.value; GS.alpha=+al.value/100; GS.gain=+gn.value;
+    $("#geneSizeV").textContent=sz.value+" px"; $("#geneGainV").textContent=gn.value+"x";
+    $("#geneAlphaV").textContent=al.value+"%"; requestDraw(true); };
+  sz.addEventListener("input",upd); al.addEventListener("input",upd); gn.addEventListener("input",upd); upd();
+  $("#genePlane").onchange=(e)=>{ GS.plane=e.target.checked; requestDraw(); }; }
+
+// ---------------------------------------------------------------- catalog
+// Catalog mode is the public explorer: the server lists published datasets by id and builds
+// their layers itself, so no path leaves the page. Each layer of a dataset gets one checkbox;
+// it is fetched the first time it is ticked and only hidden, never dropped, when unticked, so
+// switching it back on is instant and any combination can be on at once.
+const pending=new Map();
+const esc=(v)=>String(v).replace(/[&<>"]/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function dropLayers(){
+  for(const L of S.layers){ if(L.tex) gl.deleteTexture(L.tex); if(L.pal) gl.deleteTexture(L.pal);
+    for(const T of (L.tiles||[])){ if(T.tex) gl.deleteTexture(T.tex); if(T.occ) gl.deleteTexture(T.occ); }
+    if(L.ov){ gl.deleteTexture(L.ov.tex); gl.deleteTexture(L.ov.occ); }
+    for(const v of L.solidVol.values()) if(v){ gl.deleteTexture(v.tex); gl.deleteTexture(v.blk); }
+    if(L.lines){ for(const b of L.lines.bufs) gl.deleteBuffer(b); gl.deleteVertexArray(L.lines.vao); }
+    if(L.fillGeo){ gl.deleteBuffer(L.fillGeo.buf); gl.deleteVertexArray(L.fillGeo.vao); }
+    for(const T of (L.stiles||[])){ if(T.tex) gl.deleteTexture(T.tex); if(T.occ) gl.deleteTexture(T.occ); }
+    if(L.sov&&L.sov.tex){ gl.deleteTexture(L.sov.tex); gl.deleteTexture(L.sov.occ); } }
+  S.layers=[]; S.bytes=0; renderLayers(); syncViewButtons(); requestDraw(); }
+async function showLayer(ds,key,cb){
+  const gen=S.gen;
+  if(cb.checked && !S.layers.find((x)=>x.meta.key===key)){
+    if(!pending.has(key)) pending.set(key,(async()=>{
+      setStatus(`building ${key} ...`);
+      let m;
+      for(;;){                            // 202 while the server is still cutting full-resolution tiles
+        m=await api(`/api/dataset_layer?id=${encodeURIComponent(ds.id)}&key=${encodeURIComponent(key)}`);
+        if(m.status!=="building") break;
+        setStatus(`preparing the full-resolution ${key} on the server ... ${m.total?Math.round(100*m.done/m.total):0}%`);
+        await new Promise((ok)=>setTimeout(ok,2000));
+        if(gen!==S.gen) return;
+      }
+      if(gen===S.gen){
+        await addLayer(m);
+        const L=S.layers.find((x)=>x.meta.key===key), ly=ds.layers.find((x)=>x.key===key);
+        if(L){ L.ds=ds.id; L.canSolid=!!(ly&&ly.solid); L.view=(ly&&ly.view)||null; L.group=(ly&&ly.group)||null;
+          // solid surfaces are the default view of a label layer (&mode=voxel opens the voxels); until the
+          // server has them ready the voxels are shown, and the view switches over when they arrive —
+          // unless the visitor has picked a view in the meantime
+          L.envelope=params.get("envelope")==="1";
+          renderLayers();
+          if(L.canSolid && params.get("mode")!=="voxel")
+            ensureSolid(L).then(()=>{ if(!L.solid||L.picked||L.mode==="solid"||!S.layers.includes(L)) return;
+              L.mode="solid"; repump(L); renderLayers(); requestDraw(); return syncSolid(L); })
+              .catch((e)=>setStatus(e.message,true)); }
+      }
+    })().finally(()=>pending.delete(key)));
+    await pending.get(key);
+  }
+  const L=S.layers.find((x)=>x.meta.key===key);
+  const isImage=(x)=>x.meta.kind==="rgb"||x.meta.kind==="intensity";
+  if(L&&cb.checked&&isImage(L)){                                 // one image at a time: they overlay
+    for(const o of S.layers) if(o!==L&&isImage(o)&&o.visible){
+      o.visible=false; releaseTiles(o);
+      const b=S.showBoxes&&S.showBoxes.get(o.group||o.meta.key); if(b) b.checked=false; } }
+  if(L){ L.visible=cb.checked;                                   // the box, not the call, is the truth
+    if(!L.visible){ releaseTiles(L); repumpAll(); } else repump(L);
+    renderLayers(); requestDraw(); }
+}
+async function selectDataset(ds,show){
+  S.gen=(S.gen||0)+1; pending.clear(); S.hiddenNames.clear(); dropGenes(); dropLayers();
+  if(!params.get("view")) S.viewPicked=false;
+  S.z2d=null; S.zPicked=false;                    // a new dataset opens at its own middle plane
+  $("#dsInfo").innerHTML=(ds.info||[]).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  const want=show?new Set(show.split(",")):null, box=$("#dsShow"); box.innerHTML="";
+  // one box per show-group: the members of a group (its 3D and 2D elements) come and go together
+  const groups=[];
+  for(const ly of ds.layers){ const gk=ly.group||ly.key; let g=groups.find((x)=>x.key===gk);
+    if(!g){ g={key:gk,label:ly.label,show:ly.show,members:[]}; groups.push(g); } g.members.push(ly); }
+  S.showBoxes=new Map();
+  const boxes=groups.map((g)=>{
+    const lab=document.createElement("label"); lab.className="show";
+    lab.innerHTML=`<input type="checkbox"> ${esc(g.label)}`;
+    const cb=lab.querySelector("input");
+    cb.checked=want?(want.has(g.key)||g.members.some((m)=>want.has(m.key))):g.show!==false;
+    cb.onchange=()=>Promise.all(g.members.map((m)=>showLayer(ds,m.key,cb))).catch((e)=>{ setStatus(e.message,true); });
+    S.showBoxes.set(g.key,cb); box.appendChild(lab); return [g,cb]; });
+  // members load independently: one that fails (a missing element) must not hide the others
+  for(const [g,cb] of boxes) if(cb.checked) for(const m of g.members)
+    await showLayer(ds,m.key,cb).catch((e)=>setStatus(`${m.label}: ${e.message}`,true));
+  // a dataset with depth opens in 3D; one made only of single planes opens as a 2D slice
+  syncViewButtons();
+  loadGenes(ds).catch((e)=>setStatus("genes: "+e.message,true));
+}
+// ---------------------------------------------------------------- a store of your own
+// The visitor's folder is read in the browser and drawn on its own 2D canvas (local/viewer.js):
+// nothing is uploaded, so none of the server-side preparation the datasets above rely on exists
+// for it.  The two views never run together -- opening one takes the other down.
+let LOCAL=null;
+async function openLocalStore(make){
+  try{
+    if(LOCAL){ LOCAL.close(); LOCAL=null; }
+    clearDataset();
+    const source=await make();
+    if(!source) return;
+    $("#localGl").hidden=false; $("#gl").hidden=true;
+    $("#catalogSection").hidden=true; $("#localSection").hidden=false;
+    // the 3D controls, the gene panel and the toolbar drive the WebGL view, which is not what is
+    // on screen now; a store read in the browser has its own panel and its own canvas
+    for(const id of ["#geneSection","#viewSection","#toolbar","#triad","#help"]) $(id).hidden=true;
+    const {openLocal}=await import("./local/viewer.js");
+    LOCAL=await openLocal({ source, canvas:$("#localGl"), panel:$("#localPanel"), status:(m)=>setStatus(m) });
+  }catch(e){
+    closeLocalStore();
+    setStatus(e&&e.message?e.message:String(e),true);
+  }
+}
+function closeLocalStore(){
+  if(LOCAL){ LOCAL.close(); LOCAL=null; }
+  $("#localGl").hidden=true; $("#gl").hidden=false;
+  $("#catalogSection").hidden=false; $("#localSection").hidden=true;
+  for(const id of ["#viewSection","#toolbar","#triad","#help"]) $(id).hidden=false;
+  $("#dsSelect").value="";
+  setStatus("choose a dataset, or open a store of your own");
+}
+async function urlSource(url){
+  const {sourceForUrl}=await import("./local/open.js");
+  return sourceForUrl(url);
+}
+async function pickLocalFolder(){
+  const {pickFolderSource}=await import("./local/open.js");
+  return pickFolderSource({ input:$("#localFiles"), force:!!params.get("fileinput"), status:setStatus });
+}
+async function openCatalog(want,show){
+  const {datasets}=await api("/api/datasets");
+  if(!datasets.length){ setStatus("no datasets published yet",true); return; }
+  const sel=$("#dsSelect");
+  // nothing is loaded until a dataset is picked: opening one costs hundreds of megabytes on the
+  // GPU, which is not something to spend on a visitor who came to look at their own data
+  sel.innerHTML=`<option value="">Choose a dataset…</option>`+
+    datasets.map((d)=>`<option value="${esc(d.id)}">${esc(d.title)}</option>`).join("");
+  sel.onchange=()=>{ const d=datasets.find((x)=>x.id===sel.value);
+    if(!d){ clearDataset(); return; }
+    selectDataset(d).catch((e)=>setStatus(e.message,true)); };
+  const ds=datasets.find((d)=>d.id===want);
+  sel.value=ds?ds.id:"";
+  if(ds) await selectDataset(ds,show);
+  else setStatus("choose a dataset, or open a store of your own");
+}
+
+/** back to an empty view: no dataset, nothing left on the GPU */
+function clearDataset(){
+  S.gen=(S.gen||0)+1; pending.clear(); S.hiddenNames.clear(); dropGenes(); dropLayers();
+  $("#dsInfo").innerHTML=""; $("#dsShow").innerHTML="";
+  setStatus("choose a dataset, or open a store of your own");
+}
+
+// ---------------------------------------------------------------- boot
+// ?path=<store>&layers=<element>,<element>&stride=4&tif=<file>&tiflevel=3&tifz=3
+// opens a store and adds those layers straight away — a view can be linked or scripted.
+const params=new URLSearchParams(location.search);
+$("#path").value = params.get("path") || "";   // the development default is set below, only outside the catalog
+$("#tifPath").value = params.get("tif") || "";
+if(params.get("stride")) $("#stride").value=params.get("stride");
+if(params.get("tiflevel")) $("#tifLevel").value=params.get("tiflevel");
+if(params.get("tifz")) $("#tifZ").value=params.get("tifz");
+(async()=>{
+  // single-file mode: the server exposes one image stack and nothing else, so the store
+  // browser is hidden rather than left to fail, and that stack is added on load
+  let cfg={};
+  // a failed request is retried rather than read as "no catalog": that fallback opens the file browser
+  for(let i=0;i<4;i++){
+    try{ const r=await fetch("/api/config"); if(r.ok){ cfg=await r.json(); break; } if(r.status===403||r.status===404) break; }catch(_){}
+    await new Promise((ok)=>setTimeout(ok,300*(i+1))); }
+  if(cfg.only){
+    $("#storeSection").hidden=true;
+    $("#tifPath").value=cfg.only; $("#tifPath").readOnly=true;
+    for(const o of [...$("#tifLevel").options]) if(+o.value<(cfg.min_level||0)) o.remove();
+    $("#sub").textContent="single file: "+cfg.only.split("/").pop();
+  }
+  if(!cfg.catalog && !cfg.only && cfg.catalog!==undefined && !params.get("path"))
+    $("#path").value=cfg.root||"";
+  if(cfg.catalog===undefined){                 // the server did not answer: show nothing of the local-store browser
+    $("#storeSection").hidden=true; $("#tifSection").hidden=true;
+    setStatus("The viewer could not be reached. Reload the page, or open the full link you were given.",true); return; }
+  if(cfg.catalog){
+    S.catalog=true;
+    $("#openLocal").onclick=()=>openLocalStore(pickLocalFolder);
+    $("#localBack").onclick=closeLocalStore;
+    if(!window.showDirectoryPicker)
+      $("#localHint").textContent="Your browser hands the whole folder over at once, so a large store takes a moment to open. Nothing is uploaded either way.";
+    $("#storeSection").hidden=true; $("#tifSection").hidden=true; $("#catalogSection").hidden=false;
+    $("#panel h1").textContent="SSAF-T Cell-Type Map";
+    $("#sub").textContent="spatial transcriptomics, SSAF-T results";
+    document.title="SSAF-T Cell-Type Map";
+  }
+  const p=$("#path").value;
+  try{
+    // ?dataset=<id>&show=<key>,<key>  opens one dataset with those layers ticked
+    if(cfg.catalog) await openCatalog(params.get("dataset"), params.get("show"));
+    // ?local=<url>  opens a store served over HTTP with the same reader a picked folder goes through
+    if(cfg.catalog && params.get("local")) await openLocalStore(()=>urlSource(params.get("local")));
+    if(!cfg.only && !cfg.catalog){
+    if(p.endsWith(".zarr")||p.includes(".zarr/")||params.get("layers")) await openStore(p);
+    else await browse(p);
+    for(const nm of (params.get("layers")||"").split(",").filter(Boolean)){
+      const e=(S.store?.elements||[]).find((x)=>x.name===nm&&x.renderable);
+      if(!e){ setStatus("no such element: "+nm,true); continue; }
+      const q=new URLSearchParams({path:p, group:e.group, element:e.name, stride:$("#stride").value});
+      if(e.um_per_px_guess && e.group!=="ssaft") q.set("um_per_px", e.um_per_px_guess);
+      await addLayer(await api("/api/layer?"+q));
+    }
+    }
+    if(cfg.only || (params.get("tif") && params.get("addtif")==="1")){
+      const q=new URLSearchParams({file:cfg.only||params.get("tif"), level:$("#tifLevel").value,
+                                   z_um:$("#tifZ").value, stride:"1"});
+      await addLayer(await api("/api/tif?"+q));
+    }
+    // &opacity=1,0.4  &hide=1  &iso=0.3  &view=oblique  — per layer, in the order added
+    const ops=(params.get("opacity")||"").split(",").filter((x)=>x!=="");
+    ops.forEach((v,i)=>{ if(S.layers[i]) S.layers[i].opacity=Math.max(0.05,Math.min(1,+v)); });
+    for(const i of (params.get("hide")||"").split(",").filter((x)=>x!==""))
+      if(S.layers[+i]) S.layers[+i].visible=false;
+    const isos=(params.get("iso")||"").split(",").filter((x)=>x!=="");
+    isos.forEach((v,i)=>{ if(S.layers[i]) S.layers[i].iso=Math.max(0.05,Math.min(0.9,+v)); });
+    if(params.get("zscale")){ const z=$("#zscale"); z.value=params.get("zscale"); z.dispatchEvent(new Event("input")); }
+    if(ops.length||isos.length||params.get("hide")) renderLayers();
+    // &view=2d&z=12  opens a 2D slice at that z (µm)
+    if(params.get("view")){ S.viewPicked=true; setView(params.get("view")); }
+    if(S.mode2d&&params.get("z")!==null){ S.zPicked=true; S.z2d=+params.get("z"); syncZ(); }
+    if(+params.get("zoom")>1){ if(S.mode2d) S.v2.upp/=+params.get("zoom"); else S.cam.dist/=+params.get("zoom"); requestDraw(true); }
+    // &at=x,y  centres the view on that point (µm);  &ui=0  hides the panels, for figure captures
+    if(params.get("at")){ const [ax_,ay_]=params.get("at").split(",").map(Number);
+      if(S.mode2d){ S.v2.cx=ax_; S.v2.cy=ay_; } else { S.cam.target[0]=ax_; S.cam.target[1]=-ay_; }
+      requestDraw(true); }
+    if(params.get("ui")==="0") for(const id of ["#panel","#toolbar","#help","#triad"]) $(id).style.display="none";
+    requestDraw();
+  }catch(e){ setStatus(e.message,true); }
+})();
+requestAnimationFrame(frame);
+window.__viewer=S;
+</script>
+</body>
+</html>

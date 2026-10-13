@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64">
+  <!-- the app icon: the SSAF-T site's favicon (a navy tile with a T) with the T and a border in light purple.
+       The T is drawn as shapes, not text, so it looks the same whatever fonts the build machine has. -->
+  <rect x="3" y="3" width="58" height="58" rx="13" fill="#142d50" stroke="#C4B5FD" stroke-width="1.4"/>
+  <rect x="17" y="15" width="30" height="8.5" rx="1.2" fill="#C4B5FD"/>
+  <rect x="27.5" y="15" width="9" height="34" rx="1.2" fill="#C4B5FD"/>
+</svg>
