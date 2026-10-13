@@ -2,6 +2,9 @@
 .desk-word { font-size: 21px; font-weight: 800; letter-spacing: -.06em; line-height: 1.1; color: var(--text); }
 .desk-word span { font-weight: 600; letter-spacing: -.02em; color: var(--muted); }
 #localOpen .hint { margin: 6px 0 0; }
+.desk-links { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.desk-links a { color: var(--muted); }
+.desk-links a:hover { color: var(--accent); }
 #localOpen { margin: 0 0 12px; border-top: 0; padding-top: 0; }
 #deskDrop {
 	position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
@@ -9,3 +12,9 @@
 	color: var(--text); font-size: 16px;
 }
 #deskDrop[hidden] { display: none; }
+
+/* before a store is open: the panel's title and Open block only */
+body.desk-empty #catalogSection > h2, body.desk-empty #dsShow, body.desk-empty #layersHead, body.desk-empty #layers,
+body.desk-empty #geneSection, body.desk-empty #viewSection,
+body.desk-empty #toolbar, body.desk-empty #triad, body.desk-empty #help { display: none !important; }
+#localOpen #status { margin-top: 8px; }

@@ -9,7 +9,9 @@
  *     named in the window title;
  *   - "Your own data" (the in-browser reader, a 2D canvas the site falls back on for a visitor's folder)
  *     becomes an Open button that sends the store to the server, so it gets the full viewer;
- *   - a .zarr folder dropped anywhere on the window is opened the same way.
+ *   - a .zarr folder dropped anywhere on the window is opened the same way;
+ *   - until a store is open, the panel holds only its title and the Open block; the rest of it, and the
+ *     controls over the view, appear once a store is open.
  * The page's functions are classic-script globals, so they are called and replaced by name.
  */
 'use strict';
@@ -17,7 +19,7 @@
 	if (!window.__viewer) return;                // no WebGL2: the page's own fallback is in charge
 	const app = window.ssaft || null;            // the Electron bridge (preload.js); absent in a browser
 	const name = (p) => String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
-	const hello = () => setStatus('Open an SSAF-T store (.zarr folder): File > Open, the button above, or drop it on the window');
+	const hello = () => setStatus('');
 
 	async function current() {
 		const r = await fetch('/api/datasets');
@@ -26,13 +28,14 @@
 	async function show(d) {
 		$('#dsSelect').innerHTML = `<option value="${esc(d.id)}">${esc(d.title)}</option>`;
 		document.title = `${d.title} — SSAF-T Viewer`;
+		empty(false);                          // the panel shows the layers coming in
 		await selectDataset(d);
 	}
 
 	// the page's boot calls this once the server has answered /api/config
 	openCatalog = async () => {
 		const d = await current();
-		if (d) await show(d); else { clearDataset(); hello(); }
+		if (d) await show(d); else { clearDataset(); hello(); empty(true); document.title = 'SSAF-T Viewer'; }
 	};
 
 	async function open(path) {
@@ -64,13 +67,27 @@
 		<div class="row">
 			<button id="openZarr" title="An SSAF-T store: the ssaft_sdata.zarr folder">Open .zarr folder…</button>
 		</div>
-		<p class="hint">Or drop the folder on the window. The first opening takes longer.</p>
+		<p class="hint">Or drag and drop a .zarr folder onto the window. The first opening takes longer.</p>
+		<div class="desk-links" ${app ? '' : 'hidden'}><a href="#" id="clearCache">Clear cache</a></div>
 		<button id="openLocal" hidden></button><p id="localHint" hidden></p>
 		<input type="file" id="localFiles" hidden>`;   // the page's boot still binds these three
 	$('#catalogSection').prepend(box);
 	$('#openZarr').onclick = async () => openSafely(app ? await app.openDialog() : prompt('Path of the .zarr folder'));
+	if (app) {
+		$('#clearCache').onclick = (e) => { e.preventDefault(); app.clearCache(); };
+	}
 	// the site's in-browser reader is not used here, but its button is still bound by the page's boot
 	window.openLocalStore = () => $('#openZarr').click();
+
+	/* ---------------------------------------------------------------- before a store is open */
+	// the panel keeps its place, with only the title and the Open block in it; Show, the layers, the genes and
+	// the view controls (and the toolbar, axes and help over the view) come with a store.  The status line moves
+	// from the bottom of the view controls to under the Open button, so "reading …" and errors show either way.
+	$('#localOpen').append($('#status'));
+	function empty(on) {
+		document.body.classList.toggle('desk-empty', on);
+	}
+	empty(true);
 
 	/* ---------------------------------------------------------------- drag and drop */
 	const veil = Object.assign(document.createElement('div'), { id: 'deskDrop', hidden: true });

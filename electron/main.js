@@ -168,6 +168,8 @@ function createWindow() {
 		}
 	});
 	win.once('ready-to-show', () => win.show());
+	if (!IS_MAC) win.removeMenu();                       // no menu bar: everything is in the panel
+	win.webContents.on('before-input-event', (e, input) => shortcut(e, input));
 	win.on('closed', () => { win = null; });
 	// the page is the viewer and nothing else: links out open in the browser, nothing navigates away
 	win.webContents.setWindowOpenHandler(({ url }) => {
@@ -178,29 +180,31 @@ function createWindow() {
 		if (!server || !url.startsWith(server.url)) e.preventDefault();
 	});
 	win.webContents.on('did-finish-load', () => setTimeout(flushOpen, 300));
-	loadPage();
+	// the server takes a few seconds to start (longer on a first launch, while the OS scans its files):
+	// the window says so instead of not being there
+	if (server) loadPage(); else win.loadFile(path.join(__dirname, 'starting.html'));
+}
+
+/** the keys the menu used to carry */
+function shortcut(e, input) {
+	if (input.type !== 'keyDown') return;
+	const mod = IS_MAC ? input.meta : input.control;
+	const key = input.key.toLowerCase();
+	if (mod && !input.shift && key === 'o') { e.preventDefault(); pick().then(openPath); }
+	else if ((mod && input.shift && key === 'i') || input.key === 'F12') { e.preventDefault(); win.webContents.toggleDevTools(); }
+	else if ((mod && key === 'r') || input.key === 'F5') { e.preventDefault(); win.webContents.reload(); }
+	else if (mod && input.shift && key === 'p') { e.preventDefault(); showLog(); }   // the server log: not in the UI
 }
 
 /* ------------------------------------------------------------------ opening stores */
-const recentFile = () => path.join(dirs().userData, 'recent.json');
-function recent() {
-	try { return JSON.parse(fs.readFileSync(recentFile(), 'utf8')).filter((p) => typeof p === 'string'); }
-	catch { return []; }
-}
-function remember(p) {
-	const list = [p, ...recent().filter((x) => x !== p)].slice(0, 10);
-	try { fs.writeFileSync(recentFile(), JSON.stringify(list, null, 1)); } catch { /* not fatal */ }
-	app.addRecentDocument(p);
-	buildMenu();
-}
-
 function openPath(p) {
 	if (!p) return;
 	pendingOpen.push(p);
 	flushOpen();
 }
 function flushOpen() {
-	if (!win || win.webContents.isLoading()) return;
+	// only the viewer page listens for stores to open; the starting screen keeps them until it is there
+	if (!win || !server || win.webContents.isLoading() || !win.webContents.getURL().startsWith(server.url)) return;
 	while (pendingOpen.length) win.webContents.send('open-path', pendingOpen.shift());
 }
 
@@ -213,9 +217,11 @@ const storeArgs = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a 
 	/\.zarr[\\/]?$/i.test(a) && fs.existsSync(a));
 
 ipcMain.handle('open-dialog', () => pick());
-ipcMain.on('opened', (_e, p) => { if (typeof p === 'string') remember(p); });
+ipcMain.on('opened', (_e, p) => { if (typeof p === 'string') app.addRecentDocument(p); });
+ipcMain.on('clear-cache', () => clearCache());
+const showLog = () => shell.showItemInFolder(path.join(dirs().logs, 'server.log'));
 
-/* ------------------------------------------------------------------ menus */
+/* ------------------------------------------------------------------ cache, menu */
 async function clearCache() {
 	const r = await dialog.showMessageBox(win, {
 		type: 'question',
@@ -232,42 +238,10 @@ async function clearCache() {
 	await restart();
 }
 
+/** Windows and Linux: none (the window's menu bar is removed).  macOS always has a menu bar: the app menu
+ * (About, Quit) and Edit, without which copy and paste do not work in the page's text fields. */
 function buildMenu() {
-	const items = recent();
-	const template = [
-		...(IS_MAC ? [{ role: 'appMenu' }] : []),
-		{
-			label: 'File',
-			submenu: [
-				{ label: 'Open SSAF-T Store (.zarr Folder)…', accelerator: 'CmdOrCtrl+O', click: async () => openPath(await pick()) },
-				{
-					label: 'Open Recent',
-					submenu: items.length
-						? [...items.map((p) => ({ label: p, click: () => openPath(p) })), { type: 'separator' },
-							{ label: 'Clear Menu', click: () => { try { fs.unlinkSync(recentFile()); } catch { /* none */ } app.clearRecentDocuments(); buildMenu(); } }]
-						: [{ label: 'No recent stores', enabled: false }]
-				},
-				{ type: 'separator' },
-				{ label: 'Clear Cache…', click: clearCache },
-				{ label: 'Show Cache Folder', click: () => shell.openPath(dirs().userData) },
-				{ label: 'Show Server Log', click: () => shell.showItemInFolder(path.join(dirs().logs, 'server.log')) },
-				{ label: 'Restart Viewer Server', click: restart },
-				{ type: 'separator' },
-				IS_MAC ? { role: 'close' } : { role: 'quit' }
-			]
-		},
-		{ role: 'editMenu' },
-		{
-			label: 'View',
-			submenu: [
-				{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' },
-				{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' },
-				{ role: 'togglefullscreen' }
-			]
-		},
-		{ role: 'windowMenu' }
-	];
-	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+	Menu.setApplicationMenu(IS_MAC ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }]) : null);
 }
 
 /* ------------------------------------------------------------------ lifetime */
@@ -281,13 +255,14 @@ if (!app.requestSingleInstanceLock()) {
 	app.on('open-file', (e, p) => { e.preventDefault(); openPath(p); });   // macOS: dropped on the Dock icon
 	app.whenReady().then(async () => {
 		buildMenu();
+		createWindow();
+		for (const p of storeArgs(process.argv)) openPath(p);
 		try {
 			await startServer();
 		} catch (e) {
 			return fatal(e);
 		}
-		createWindow();
-		for (const p of storeArgs(process.argv)) openPath(p);
+		loadPage();
 		app.on('activate', () => { if (!win) createWindow(); });
 	});
 	app.on('window-all-closed', () => { if (!IS_MAC) app.quit(); });

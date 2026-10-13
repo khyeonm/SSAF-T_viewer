@@ -1,7 +1,7 @@
 {
   "name": "ssaft-viewer",
   "productName": "SSAF-T Viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The SSAF-T cell-type map viewer, for an SSAF-T store (.zarr) on your own computer",
   "author": "PNU CoLab",
   "license": "UNLICENSED",
@@ -51,28 +51,35 @@
         "dmg"
       ],
       "category": "public.app-category.education",
-      "identity": "-"
+      "identity": "-",
+      "icon": "build-resources/icon-mac.png"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build-resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build-resources/icon.ico",
+      "uninstallerIcon": "build-resources/icon.ico",
+      "installerHeaderIcon": "build-resources/icon.ico"
     },
     "linux": {
       "target": [
         "AppImage",
         "dir"
       ],
-      "category": "Science"
+      "category": "Science",
+      "icon": "build-resources/icon.png"
     },
     "artifactName": "SSAF-T-Viewer-${version}-${os}-${arch}.${ext}",
     "dmg": {
-      "title": "SSAF-T Viewer ${version}"
+      "title": "SSAF-T Viewer ${version}",
+      "icon": "build-resources/icon-mac.png"
     }
   },
   "repository": "github:khyeonm/SSAF-T_viewer"

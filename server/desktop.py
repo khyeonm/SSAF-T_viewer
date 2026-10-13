@@ -829,9 +829,11 @@ def main():
     ap.add_argument("--open", action="append", default=[], help="open this store at start-up")
     ap.add_argument("--build-genes", nargs=2, metavar=("STORE", "ELEMENT"), default=None)
     a = ap.parse_args()
-    # app.py imports these inside its functions; without them a store would fail only once opened
+    # app.py imports these inside its functions; without them a store would fail only once opened.  A frozen
+    # build carries them, and importing them all here would only slow its start (on Windows each DLL loaded is
+    # scanned on a first launch), so only a Python run from source is checked.
     missing = []
-    for mod in ("zarr", "scipy.ndimage", "pyarrow.dataset", "geopandas", "shapely", "PIL.Image"):
+    for mod in () if FROZEN else ("zarr", "scipy.ndimage", "pyarrow.dataset", "geopandas", "shapely", "PIL.Image"):
         try:
             __import__(mod)
         except ImportError:

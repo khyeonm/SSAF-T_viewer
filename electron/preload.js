@@ -1,6 +1,6 @@
 /**
  * What the page may ask of the app (web/desktop.js uses it): a file dialog, the path of a file dropped on
- * the window, and the stores the menus open.  Nothing else of Node or Electron reaches the page.
+ * the window, the stores a launch or the Dock opens, and clearing the cache.  Nothing else of Node or Electron reaches the page.
  */
 'use strict';
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('ssaft', {
 	pathForFile: (file) => webUtils.getPathForFile(file),
 	/** a store the File menu, the Dock or a second launch wants opened */
 	onOpenPath: (cb) => ipcRenderer.on('open-path', (_e, p) => cb(p)),
-	/** a store opened: for File > Open Recent */
-	opened: (p) => ipcRenderer.send('opened', p)
+	/** a store opened: for the OS's recent documents */
+	opened: (p) => ipcRenderer.send('opened', p),
+	/** empty the cache of prepared tiles (asks first; restarts the server) */
+	clearCache: () => ipcRenderer.send('clear-cache')
 });

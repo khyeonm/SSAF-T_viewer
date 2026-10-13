@@ -25,10 +25,15 @@ HIDDEN = [
     "numcodecs.blosc", "numcodecs.gzip", "numcodecs.lz4", "scipy.ndimage", "pyarrow", "pyarrow.compute",
     "pyarrow.dataset", "pyarrow.parquet", "geopandas", "shapely", "PIL.Image", "tifffile",
 ]
-COLLECT = ["zarr", "numcodecs", "geopandas", "shapely", "pyproj", "pyarrow"]
+# zarr picks its codecs at run time, so their modules are named in full; the other packages come with
+# PyInstaller's own hooks (pyinstaller-hooks-contrib), which take what they need.  `--collect-all` on them
+# shipped their tests and sample data too: thousands of files more for an installer to write and an
+# antivirus to scan.
+SUBMODULES = ["zarr", "numcodecs"]
 METADATA = ["zarr", "numcodecs", "donfig", "geopandas", "shapely", "pyarrow", "numpy", "crc32c"]
 EXCLUDE = ["cupy", "cupyx", "tkinter", "matplotlib", "IPython", "jupyter", "notebook", "pytest",
-           "dask", "distributed", "numba", "llvmlite", "torch"]
+           "dask", "distributed", "numba", "llvmlite", "torch", "zarr.testing", "numcodecs.tests",
+           "pyarrow.tests", "pandas.tests", "scipy.tests"]
 
 
 def main():
@@ -41,8 +46,8 @@ def main():
             "--specpath", str(WORK), "--paths", str(ROOT / "server")]
     for h in HIDDEN:
         args += ["--hidden-import", h]
-    for c in COLLECT:
-        args += ["--collect-all", c]
+    for c in SUBMODULES:
+        args += ["--collect-submodules", c]
     for m in METADATA:
         try:
             __import__(m)
