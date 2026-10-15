@@ -68,6 +68,13 @@
   .layer .nm { font-size:12.5px; }
   .layer .meta { color:var(--muted); font-size:11px; margin-top:3px; }
   .sw { width:14px; height:14px; border-radius:4px; border:1px solid #0006; display:inline-block; }
+  #hoverTip { position:fixed; z-index:30; pointer-events:none; display:flex; align-items:center; gap:6px;
+    background:#11151bee; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px;
+    font-size:12px; white-space:nowrap; box-shadow:0 2px 10px #0006; }
+  #hoverTip[hidden] { display:none; }
+  input.swc { width:16px; height:16px; padding:0; border:1px solid #0006; border-radius:4px; background:none; cursor:pointer; flex:none; }
+  input.swc::-webkit-color-swatch-wrapper { padding:0; } input.swc::-webkit-color-swatch { border:none; border-radius:3px; }
+  input.swc::-moz-color-swatch { border:none; border-radius:3px; }
   .cls { display:grid; grid-template-columns:16px 1fr auto; gap:7px; align-items:center; padding:2px 3px;
     border-radius:5px; cursor:pointer; font-size:12px; }
   .cls:hover { background:#1f2530; }
@@ -847,12 +854,12 @@ function requestDraw(i){ dirty=true; if(i){ interacting=true; clearTimeout(idleT
   idleTimer=setTimeout(()=>{interacting=false;dirty=true;repumpAll();},160);} }
 
 // ---------------------------------------------------------------- data
-async function api(url){ const r=await fetch(url);
+async function api(url,init){ const r=await fetch(url,init);
   if(r.status===403&&!(r.headers.get("Content-Type")||"").includes("json"))
     throw new Error("This viewer needs its access link. Open the full link you were given.");
   const j=await r.json();
   if(j.error) throw new Error(j.error); return j; }
-async function fetchGz(url){ const r=await fetch(url); if(!r.ok) throw new Error(url+": "+r.status);
+async function fetchGz(url,init){ const r=await fetch(url,init); if(!r.ok) throw new Error(url+": "+r.status);
   const ds=r.body.pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(ds).arrayBuffer()); }
 function texU8(data,w,h,d,filter){
@@ -884,9 +891,24 @@ function lineUniforms(u,L,fill){
   gl.uniform1f(u.uAlpha,fill&&!byC?0.35*op:op);
   gl.uniform1i(u.uByClass,byC?1:0); gl.uniform1i(u.uHasCls,L.meta.classes&&L.meta.classes.length?1:0);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,L.pal||null); gl.uniform1i(u.uPal,0); }
+// cell-type colours the visitor picked, by name: one choice recolours that cell type in every layer
+const CLASS_COLORS=new Map();
+function clsColor(c){ return CLASS_COLORS.get(c.name)||c.color; }
+function hex6(c){ const h=String(c||"").trim();
+  if(/^#[0-9a-f]{6}$/i.test(h)) return h.toLowerCase();
+  if(/^#[0-9a-f]{3}$/i.test(h)) return ("#"+h[1]+h[1]+h[2]+h[2]+h[3]+h[3]).toLowerCase();
+  const [r,g,b]=hexRGB(h); return "#"+[r,g,b].map((x)=>Math.round(x*255).toString(16).padStart(2,"0")).join(""); }
+function setClassColor(name,col){
+  if(col===null) CLASS_COLORS.delete(name); else CLASS_COLORS.set(name,col);
+  for(const L of S.layers) if(L.meta.classes&&L.meta.classes.some((c)=>c.name===name)) palTex(L);
+  for(const sw of document.querySelectorAll("#layers .cls")) if(sw.dataset.name===name){
+    const i=sw.querySelector("input.swc"), c=S.layers.flatMap((L)=>L.meta.classes||[]).find((x)=>x.name===name);
+    if(i&&c) i.value=hex6(clsColor(c)); }
+  for(const b of document.querySelectorAll("#layers .clsReset")) b.hidden=!CLASS_COLORS.size;
+  requestDraw(); }
 function palTex(layer){
   const d=new Uint8Array(256*4);
-  for(const c of layer.meta.classes||[]){ const [r,g_,b]=hexRGB(c.color);
+  for(const c of layer.meta.classes||[]){ const [r,g_,b]=hexRGB(clsColor(c));
     d.set([r*255,g_*255,b*255, layer.hidden.has(c.id)?0:255], c.id*4); }
   if(!layer.pal){ layer.pal=gl.createTexture(); }
   gl.bindTexture(gl.TEXTURE_2D,layer.pal); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
@@ -926,7 +948,7 @@ function tilesInUse(){ let b=0; for(const [,ts] of tileSets()) for(const t of ts
 function tileDist(m,T){ const v=m.voxel_um, o=m.origin_um, tg=S.mode2d?[S.v2.cx,-S.v2.cy]:S.cam.target;
   return Math.hypot(o[0]+(T.x0+T.w/2)*v[0]-tg[0], -(o[1]+(T.y0+T.h/2)*v[1])-tg[1]); }
 function freeTile(T){ if(T.tex) gl.deleteTexture(T.tex); if(T.occ) gl.deleteTexture(T.occ);
-  T.tex=T.occ=null; if(T.state==="ready") S.bytes-=T.bytes||0; T.bytes=0; T.state="none"; }
+  T.tex=T.occ=null; T.cpu=null; if(T.state==="ready") S.bytes-=T.bytes||0; T.bytes=0; T.state="none"; }
 // room for `need` more bytes of tiles, by dropping ready tiles (of any layer) farther from the view than `near`
 function makeRoom(m,near,need){
   let used=tilesInUse();
@@ -959,6 +981,7 @@ function pumpTiles(L){
       : fetchGz(T.file).then((data)=>{
           if(!S.layers.includes(L)) return;      // the dataset changed while this was loading
           const b0=S.bytes; T.tex=texU8(data,T.w,T.h,m.dims.z,false); T.occ=occTex(data,T.w,T.h,m.dims.z,16);
+          if(m.kind==="labels") T.cpu=data;       // the hover reads the cell type under the cursor here
           T.bytes=S.bytes-b0; T.state="ready"; gpuCheck();
           if(!L.visible||L.mode==="solid") freeTile(T);   // switched off while it was on its way
         })).catch((e)=>{ T.tries=(T.tries||0)+1; T.state=T.tries<3?"none":"error"; if(T.state==="error") setStatus("tile: "+e.message,true); })
@@ -1012,6 +1035,7 @@ async function addLayer(meta){
       L.fillGeo={vao:fvao,buf:fb,count:tidx.length}; S.bytes+=tidx.byteLength;
     }
     const hasCls=!!(meta.classes&&meta.classes.length);
+    if(hasCls&&cB) L.geo={ xy, cnt, cls:cB };   // the polygons, for the hover's point-in-cell test
     L.fill=hasCls&&!!L.fillGeo; L.fillByClass=hasCls; L.outline=true; L.byClass=false; L.color=meta.color||"#ffffff";
     S.bytes+=xy.byteLength+cls.byteLength+idx.byteLength;
   } else if(meta.kind==="rgb"){                      // a colour image: JPEG tiles, overview first
@@ -1021,10 +1045,12 @@ async function addLayer(meta){
     L.tiles=meta.tiles.map((t)=>({...t, state:"none", tex:null}));
   } else if(tiled){
     const o=meta.overview;
-    L.ov={ tex:texU8(data,o.w,o.h,meta.dims.z,false), occ:occTex(data,o.w,o.h,meta.dims.z,4), factor:o.factor, w:o.w, h:o.h };
+    L.ov={ tex:texU8(data,o.w,o.h,meta.dims.z,false), occ:occTex(data,o.w,o.h,meta.dims.z,4), factor:o.factor, w:o.w, h:o.h,
+           cpu:meta.kind==="labels"?data:null };
     L.tiles=meta.tiles.map((t)=>({...t, state:t.empty?"empty":"none", tex:null, occ:null}));
   } else {
     L.tex=texU8(data,meta.dims.x,meta.dims.y,meta.dims.z, meta.kind==="intensity");
+    if(meta.kind==="labels") L.cpu=data;
   }
   if(meta.classes&&meta.classes.length){      // a layer ticked later starts with the dataset's selection
     L.hidden=new Set(meta.classes.filter((c)=>S.hiddenNames.has(c.name)).map((c)=>c.id)); palTex(L); }
@@ -1140,7 +1166,7 @@ function draw(){
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,vol.blk);
       gl.drawArrays(gl.TRIANGLES,0,36); };
     if(envelope){ one(L.solidVol.get("tissue"),[0.72,0.75,0.8],0.30); return; }
-    for(const c of L.solid.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(c.color),L.opacity); };
+    for(const c of L.solid.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(clsColor(c)),L.opacity); };
   const drawTiled=(L)=>{
     const m=L.meta, v=m.voxel_um, o=m.origin_um, D=m.dims.z, u=P_TILED.u;
     gl.useProgram(P_TILED.p); gl.bindVertexArray(cubeVAO);
@@ -1393,7 +1419,7 @@ function draw2D(){
       const one=(vol,rgb,a)=>{ if(!vol) return; gl.uniform3fv(u.uColor,rgb); gl.uniform1f(u.uAlpha,a);
         gl.bindTexture(gl.TEXTURE_2D_ARRAY,vol.tex); whole(u,sm); };
       if(L.envelope) one(L.solidVol.get("tissue"),[0.72,0.75,0.8],0.22);
-      for(const c of sm.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(c.color),L.opacity);
+      for(const c of sm.classes) if(!L.hidden.has(c.id)) one(L.solidVol.get(c.id),hexRGB(clsColor(c)),L.opacity);
       continue; }
     const t=planeOf(L.meta); if(t===null) continue;
     const u=use(P2_LABEL); gl.uniform1i(u.uPlane,Math.floor(t)); gl.uniform1f(u.uAlpha,L.opacity);
@@ -1487,6 +1513,99 @@ canvas.addEventListener("pointermove",(e)=>{
     S.cam.el=Math.max(-Math.PI/2+0.002,Math.min(Math.PI/2-0.002,S.cam.el+dy*R));
     S.vel.az=-dx*R*0.85; S.vel.el=dy*R*0.85; }
   requestDraw(true); });
+// ---------------------------------------------------------------- hover: the cell type under the cursor
+// While the cell-type map or the SSAF-T cells are shown, the cell type under the cursor is named in a box by
+// it.  Label layers are read from the values the viewer already holds (the tiles in view, else the
+// overview); the 2D cell outlines by a point-in-polygon test.  In 3D the ray under the cursor is walked
+// through the label volumes to the first visible cell.
+const hoverTip=document.createElement("div"); hoverTip.id="hoverTip"; hoverTip.hidden=true; document.body.appendChild(hoverTip);
+let hoverReq=0, hoverAt=null;
+function labelAt(L,x,y,z,clampZ){
+  const m=L.meta, o=m.origin_um, v=m.voxel_um, d=m.dims;
+  const ix=Math.floor((x-o[0])/v[0]), iy=Math.floor((y-o[1])/v[1]);
+  if(ix<0||iy<0||ix>=d.x||iy>=d.y) return 0;
+  let iz=d.z===1?0:Math.floor((z-o[2])/v[2]);
+  if(clampZ) iz=Math.max(0,Math.min(d.z-1,iz)); else if(iz<0||iz>=d.z) return 0;
+  if(L.tiled){
+    for(const T of L.tiles){
+      if(ix<T.x0||iy<T.y0||ix>=T.x0+T.w||iy>=T.y0+T.h) continue;
+      if(T.state==="empty") return 0;
+      if(T.cpu) return T.cpu[(iz*T.h+(iy-T.y0))*T.w+(ix-T.x0)];
+      break; }
+    const ov=L.ov; if(!ov||!ov.cpu) return 0;
+    const ox=Math.min(ov.w-1,Math.floor(ix/ov.factor)), oy=Math.min(ov.h-1,Math.floor(iy/ov.factor));
+    return ov.cpu[(iz*ov.h+oy)*ov.w+ox]; }
+  return L.cpu?L.cpu[(iz*d.y+iy)*d.x+ix]:0; }
+function classOf(L,id){
+  if(!id||L.hidden.has(id)) return null;
+  if(!L.clsById) L.clsById=new Map((L.meta.classes||[]).map((c)=>[c.id,c]));
+  return L.clsById.get(id)||null; }
+function shapeAt(L,x,y){                       // the outline (cell) holding the point, by its class
+  const g=L.geo, m=L.meta, q=m.q, o=m.origin_um; if(!g) return null;
+  if(!g.box){                                  // each ring's start and bounding box, once
+    const n=g.cnt.length, st=new Uint32Array(n), box=new Float32Array(n*4); let v=0;
+    for(let r=0;r<n;r++){ st[r]=v; let a=1e30,b=1e30,c=-1e30,e=-1e30;
+      for(let i=0;i<g.cnt[r];i++,v++){ const px=g.xy[2*v], py=g.xy[2*v+1];
+        if(px<a)a=px; if(py<b)b=py; if(px>c)c=px; if(py>e)e=py; }
+      box.set([a,b,c,e],r*4); }
+    g.st=st; g.box=box; }
+  const qx=(x-o[0])/q, qy=(y-o[1])/q;
+  for(let r=0;r<g.cnt.length;r++){
+    const b=r*4; if(qx<g.box[b]||qy<g.box[b+1]||qx>g.box[b+2]||qy>g.box[b+3]) continue;
+    let inside=false; const s0=g.st[r], n=g.cnt[r];
+    for(let i=0,j=n-1;i<n;j=i++){ const xi=g.xy[2*(s0+i)], yi=g.xy[2*(s0+i)+1], xj=g.xy[2*(s0+j)], yj=g.xy[2*(s0+j)+1];
+      if(((yi>qy)!==(yj>qy))&&(qx<(xj-xi)*(qy-yi)/(yj-yi)+xi)) inside=!inside; }
+    if(inside){ const c=classOf(L,g.cls[r]); if(c) return c; } }
+  return null; }
+function hoverLayers(){                         // cells first: a cell is the finer answer than the map
+  const ok=(L)=>L.visible&&inView(L)&&L.meta.classes&&L.meta.classes.length&&
+    (L.meta.kind==="labels"||(L.meta.kind==="shapes"&&L.geo));
+  return S.layers.filter(ok).sort((a,b)=>((b.meta.key||"").startsWith("ssaft_cells"))-((a.meta.key||"").startsWith("ssaft_cells"))); }
+function pickAt(x,y){
+  const Ls=hoverLayers(); if(!Ls.length) return null;
+  if(S.mode2d){
+    const V=S.v2, ux=V.cx+(x-canvas.clientWidth/2)*V.upp, uy=V.cy+(y-canvas.clientHeight/2)*V.upp;
+    for(const L of Ls){
+      const c=L.meta.kind==="shapes"?shapeAt(L,ux,uy):classOf(L,labelAt(L,ux,uy,S.z2d==null?0:S.z2d,true));
+      if(c) return c; }
+    return null; }
+  const vols=Ls.filter((L)=>L.meta.kind==="labels"); if(!vols.length) return null;
+  const {eye,fwd,right,up}=camBasis(), zw=S.zScale;
+  const th=Math.tan(S.fov/2), asp=canvas.clientWidth/canvas.clientHeight;
+  const dir=norm(add(fwd,add(scl(right,(2*x/canvas.clientWidth-1)*th*asp),scl(up,(1-2*y/canvas.clientHeight)*th))));
+  // the ray's stretch inside the volumes' box (world: x, -y, z * zScale)
+  let mn=[1e30,1e30,1e30], mx=[-1e30,-1e30,-1e30], step=1e30;
+  for(const L of vols){ const m=L.meta, o=m.origin_um, v=m.voxel_um, d=m.dims;
+    const a=[o[0],-(o[1]+d.y*v[1]),o[2]*zw], b=[o[0]+d.x*v[0],-o[1],(o[2]+d.z*v[2])*zw];
+    for(let i=0;i<3;i++){ mn[i]=Math.min(mn[i],a[i]); mx[i]=Math.max(mx[i],b[i]); }
+    step=Math.min(step,v[0],v[1],v[2]*zw); }
+  let t0=0, t1=1e30;
+  for(let i=0;i<3;i++){
+    if(Math.abs(dir[i])<1e-12){ if(eye[i]<mn[i]||eye[i]>mx[i]) return null; continue; }
+    let a=(mn[i]-eye[i])/dir[i], b=(mx[i]-eye[i])/dir[i]; if(a>b){ const t=a; a=b; b=t; }
+    t0=Math.max(t0,a); t1=Math.min(t1,b); }
+  if(t0>=t1) return null;
+  step=Math.max(step*0.5,(t1-t0)/4000);
+  for(let t=t0;t<=t1;t+=step){
+    const wx=eye[0]+dir[0]*t, wy=eye[1]+dir[1]*t, wz=eye[2]+dir[2]*t;
+    for(const L of vols){ const c=classOf(L,labelAt(L,wx,-wy,wz/zw,false)); if(c) return c; } }
+  return null; }
+function hideHover(){ hoverTip.hidden=true; hoverAt=null; }
+function showHover(){
+  hoverReq=0; if(!hoverAt||ptrs.size){ hideHover(); return; }
+  const [x,y,cx,cy]=hoverAt, c=pickAt(x,y);
+  if(!c){ hoverTip.hidden=true; return; }
+  hoverTip.innerHTML=`<span class="sw" style="background:${clsColor(c)}"></span>${esc(c.name)}`;
+  hoverTip.hidden=false;
+  const w=hoverTip.offsetWidth, h=hoverTip.offsetHeight;
+  hoverTip.style.left=Math.min(cx+14,window.innerWidth-w-6)+"px";
+  hoverTip.style.top=Math.min(cy+16,window.innerHeight-h-6)+"px"; }
+canvas.addEventListener("pointermove",(e)=>{
+  if(ptrs.size||e.buttons){ hideHover(); return; }
+  const r=canvas.getBoundingClientRect(); hoverAt=[e.clientX-r.left,e.clientY-r.top,e.clientX,e.clientY];
+  if(!hoverReq) hoverReq=requestAnimationFrame(showHover); });
+canvas.addEventListener("pointerleave",hideHover);
+canvas.addEventListener("wheel",hideHover,{passive:true});
 function endPtr(e){ ptrs.delete(e.pointerId); if(ptrs.size<2) pinch=null;
   if(ptrs.size===0){ drag=null; canvas.classList.remove("dragging"); } }
 canvas.addEventListener("pointerup",endPtr); canvas.addEventListener("pointercancel",endPtr);
@@ -1529,12 +1648,13 @@ function applyHidden(){
 function syncClsBar(bar){
   const names=JSON.parse(bar.dataset.names), shown=names.filter((n)=>!S.hiddenNames.has(n)).length;
   bar.querySelector("span").textContent=`${shown} of ${names.length} cell types shown`;
-  bar.querySelector("button").textContent=shown===names.length?"Deselect all":"Select all"; }
+  bar.querySelector(".clsAll").textContent=shown===names.length?"Deselect all":"Select all"; }
 function classList(L){
   const m=L.meta, box=document.createElement("div"), names=[...new Set(m.classes.map((c)=>c.name))];
   const bar=document.createElement("div"); bar.className="clsbar"; bar.dataset.names=JSON.stringify(names);
-  bar.innerHTML=`<span class="meta"></span><button title="Show or hide every cell type at once"></button>`;
-  bar.querySelector("button").onclick=()=>{
+  bar.innerHTML=`<span class="meta"></span><span class="row"><button class="clsReset" title="Back to the original cell-type colours"${CLASS_COLORS.size?"":" hidden"}>Reset colours</button><button class="clsAll" title="Show or hide every cell type at once"></button></span>`;
+  bar.querySelector(".clsReset").onclick=()=>{ for(const n of [...CLASS_COLORS.keys()]) setClassColor(n,null); };
+  bar.querySelector(".clsAll").onclick=()=>{
     const allShown=names.every((n)=>!S.hiddenNames.has(n));
     for(const n of names){ if(allShown) S.hiddenNames.add(n); else S.hiddenNames.delete(n); }
     applyHidden(); };
@@ -1543,7 +1663,10 @@ function classList(L){
   for(const c of [...m.classes].sort((a,b)=>b.voxels-a.voxels)){
     const row=document.createElement("div"); row.className="cls"+(S.hiddenNames.has(c.name)?" off":"");
     row.dataset.name=c.name; row.title="Click to show or hide this cell type in every layer";
-    row.innerHTML=`<span class="sw" style="background:${c.color}"></span><span>${esc(c.name)}</span><span class="pct">${(100*c.voxels/tot).toFixed(1)}%</span>`;
+    row.innerHTML=`<input type="color" class="swc" value="${hex6(clsColor(c))}" title="Click to choose this cell type's colour"><span>${esc(c.name)}</span><span class="pct">${(100*c.voxels/tot).toFixed(1)}%</span>`;
+    const pick=row.querySelector("input.swc");               // the colour box: a colour picker, not the row's toggle
+    pick.onclick=(e)=>e.stopPropagation();
+    pick.oninput=()=>setClassColor(c.name,pick.value);
     row.onclick=()=>{ if(S.hiddenNames.has(c.name)) S.hiddenNames.delete(c.name); else S.hiddenNames.add(c.name);
       applyHidden(); };
     box.appendChild(row); }
@@ -1866,10 +1989,12 @@ const GENE_COLORS=["#ff4d4d","#4dd2ff","#ffd24d","#7dff4d","#ff4dd2","#ffffff","
   "#40ffb0","#ff8fb0","#c8ff40","#4d8cff","#ffc9a8","#b0b0b0","#00c2a8","#ffea00"];
 const GENE_GAIN=1;
 const GS={ ds:null, list:[], n:0, cap:0, on:[], data:new Map(), size:3, alpha:1, plane:false, gen:0, filter:"", dimmed:false,
+           batch:0, ctrl:new Map(),   // the Select-all run under way, and each gene's download in flight (to cancel it)
            grid:false, gain:1 };  // array platforms have no transcripts: a gene is a grid of bin values
 // in 2D every transcript is drawn by default: one z plane holds only a few percent of them, and a
 // tilted section makes that plane cover only part of the tissue — which reads as missing data
 function dropGenes(){
+  stopGeneBatch(); for(const c of GS.ctrl.values()) c.abort(); GS.ctrl.clear();
   for(const g of GS.data.values()){ if(!g) continue;
     if(g.vao){ gl.deleteBuffer(g.buf); gl.deleteVertexArray(g.vao); }
     if(g.tex) gl.deleteTexture(g.tex);
@@ -1902,10 +2027,10 @@ async function loadGenes(ds){
 }
 function geneColor(){ const used=new Set(GS.on.map((nm)=>GS.data.get(nm)?.color).filter(Boolean));
   return GENE_COLORS.find((c)=>!used.has(c))||GENE_COLORS[GS.on.length%GENE_COLORS.length]; }
-async function fetchGrid(nm){
+async function fetchGrid(nm,signal){
   const gen=GS.gen;
-  const m=await api(`/api/gene_grid?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`);
-  const data=await fetchGz(m.file);
+  const m=await api(`/api/gene_grid?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`,{signal});
+  const data=await fetchGz(m.file,{signal});
   if(gen!==GS.gen) return null;
   const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,m.w,m.h,0,gl.RED,gl.UNSIGNED_BYTE,data);
@@ -1913,9 +2038,9 @@ async function fetchGrid(nm){
     [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D,k,v);
   S.bytes+=m.w*m.h;
   return { tex, meta:m, bytes:m.w*m.h, total:0, count:0 }; }
-async function fetchGene(nm){
+async function fetchGene(nm,signal){
   const gen=GS.gen;
-  const r=await fetch(`/api/gene_points?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`);
+  const r=await fetch(`/api/gene_points?id=${encodeURIComponent(GS.ds)}&gene=${encodeURIComponent(nm)}`,{signal});
   if(!r.ok){ let m=r.status; try{ m=(await r.json()).error||m; }catch(_){} throw new Error(`${nm}: ${m}`); }
   const total=+(r.headers.get("X-Count")||0);
   const raw=new Uint8Array(await new Response(r.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
@@ -1926,9 +2051,13 @@ async function fetchGene(nm){
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,0,0); gl.bindVertexArray(null);
   S.bytes+=xyz.byteLength;
   return { vao, buf, count:xyz.length/3, total, bytes:xyz.byteLength }; }
+// genes switched off stop at once: their downloads still under way are cancelled (and a Select-all run
+// stops starting new ones, see stopGeneBatch), so unticking never waits for what was asked before
+function cancelGene(nm){ const c=GS.ctrl.get(nm); if(c){ c.abort(); GS.ctrl.delete(nm); } }
+function stopGeneBatch(){ GS.batch++; GS.running=false; }
 async function setGene(nm,on){
   const i=GS.on.indexOf(nm);
-  if(!on){ if(i>=0) GS.on.splice(i,1); renderGenes(); requestDraw(); return; }
+  if(!on){ if(i>=0) GS.on.splice(i,1); cancelGene(nm); renderGenes(); requestDraw(); return; }
   if(i>=0) return;
   // the first gene switched on: a fully opaque cell-type map would hide the transcripts inside it
   if(!GS.on.length&&!GS.dimmed){ GS.dimmed=true; let n=0;
@@ -1937,8 +2066,12 @@ async function setGene(nm,on){
   let g=GS.data.get(nm);
   if(!g){ const color=geneColor(); GS.on.push(nm); renderGenes();
     setStatus(`loading ${nm} ...`);
-    try{ g=GS.grid?await fetchGrid(nm):await fetchGene(nm); }
-    catch(e){ GS.on=GS.on.filter((x)=>x!==nm); renderGenes(); throw e; }
+    const ctrl=new AbortController(); GS.ctrl.set(nm,ctrl);
+    try{ g=GS.grid?await fetchGrid(nm,ctrl.signal):await fetchGene(nm,ctrl.signal); }
+    catch(e){ GS.on=GS.on.filter((x)=>x!==nm); renderGenes();
+      if(e.name==="AbortError"){ requestDraw(); return; }   // switched off while it was loading
+      throw e; }
+    finally{ if(GS.ctrl.get(nm)===ctrl) GS.ctrl.delete(nm); }
     if(!g) return;
     g.color=color; GS.data.set(nm,g);
     setStatus(GS.grid ? `${nm}: expression over ${g.meta.w} × ${g.meta.h} bins of ${g.meta.vx} µm`
@@ -1966,13 +2099,15 @@ function renderGenes(){
     frag.appendChild(row); }
   box.appendChild(frag);
   $("#geneCount").textContent=`${GS.on.length} of ${GS.list.length} genes shown${q?` · ${match.length} match`:""}`;
-  const allOn=match.length&&match.every((r)=>GS.on.includes(r[0]));
+  // while a Select all is still loading, the button stops it (and switches the genes off) at once
+  const allOn=GS.running||(match.length&&match.every((r)=>GS.on.includes(r[0])));
   $("#geneAll").textContent=allOn?"Deselect all":(q?"Select all matches":"Select all");
   $("#geneAll").onclick=async()=>{
-    if(allOn){ const drop=new Set(match.map((r)=>r[0])); GS.on=GS.on.filter((x)=>!drop.has(x)); renderGenes(); requestDraw(); return; }
-    const todo=match.map((r)=>r[0]).filter((x)=>!GS.on.includes(x));
-    for(let k=0;k<todo.length;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
-    setStatus(`${GS.on.length} genes shown`); };
+    if(allOn){ stopGeneBatch(); const drop=new Set(match.map((r)=>r[0])); GS.on=GS.on.filter((x)=>!drop.has(x));
+      for(const x of drop) cancelGene(x); renderGenes(); requestDraw(); setStatus(`${GS.on.length} genes shown`); return; }
+    const b=++GS.batch, todo=match.map((r)=>r[0]).filter((x)=>!GS.on.includes(x)); GS.running=true; renderGenes();
+    for(let k=0;k<todo.length&&b===GS.batch;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
+    if(b===GS.batch){ GS.running=false; renderGenes(); setStatus(`${GS.on.length} genes shown`); } };
   // HVG only: exactly the highly variable genes (of the search matches) on, every other gene off
   const hb=$("#geneHvg"), hv=GS.hvg&&!GS.grid?match.map((r)=>r[0]).filter((x)=>GS.hvg.has(x)):[];
   hb.hidden=GS.grid;
@@ -1981,10 +2116,11 @@ function renderGenes(){
   hb.title=GS.hvg?"Show only the highly variable genes SSAF-T selected for this dataset (with the ontology markers it kept alongside them)"
                  :"No highly variable gene selection was made for this dataset: SSAF-T used its whole gene panel";
   hb.onclick=async()=>{ if(hb.disabled) return; const keep=new Set(hv);
+    for(const x of GS.on) if(!keep.has(x)) cancelGene(x);
     GS.on=GS.on.filter((x)=>keep.has(x)); renderGenes(); requestDraw();
-    const todo=hv.filter((x)=>!GS.on.includes(x));
-    for(let k=0;k<todo.length;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
-    setStatus(`${GS.on.length} highly variable genes shown`); };
+    const b=++GS.batch, todo=hv.filter((x)=>!GS.on.includes(x)); GS.running=true; renderGenes();
+    for(let k=0;k<todo.length&&b===GS.batch;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
+    if(b===GS.batch){ GS.running=false; renderGenes(); setStatus(`${GS.on.length} highly variable genes shown`); } };
 }
 function geneUniforms(u){ gl.uniform1f(u.uSize,Math.max(1,GS.size*canvas.width/Math.max(canvas.clientWidth,1)));
   gl.uniform1f(u.uAlpha,GS.alpha); }
