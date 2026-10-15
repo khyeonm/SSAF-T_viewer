@@ -269,6 +269,7 @@ def open_store(path):
         for old in list(app.CATALOG):
             app.CATALOG.pop(old)
             app.GENES.pop(old, None)
+            CELLS.pop(old, None)
         for reg in (app.TILES, app.SOLID):
             for k in [k for k in reg if k[0] != did]:
                 reg.pop(k)
@@ -298,6 +299,9 @@ def open_store(path):
             app.genes_status(d)
     except Exception:                                            # noqa: BLE001
         traceback.print_exc()                                    # the page asks again, and reports it
+    # the cells' outline index for the hover's location (a few seconds for a 3D store), ready before the first
+    # hover asks for it
+    threading.Thread(target=cell_index, args=(did,), daemon=True, name="cells").start()
     return did
 
 
@@ -807,6 +811,92 @@ app._gpu_slots = _slots_strips
 
 
 # ----------------------------------------------------------------- http
+# ----------------------------------------------------------------- the cell under the cursor
+# The page names the cell type under the cursor itself; where the store has SSAF-T cells, it then asks for
+# that cell's location: the centre the cell table keeps in obsm['spatial'] (x, y, z µm).  The cells' own
+# outlines are indexed once per store, in µm through the same transform the outline layers are drawn with:
+# the 2D outlines (the 2D slice) and the plane-by-plane 3D outlines (the 3D view, the plane nearest z).
+CELLS = {}
+CELLS_LOCK = threading.Lock()
+
+
+def _outline_index(g, spec):
+    """(STRtree, cell ids, z per outline or None, plane step) of one SSAF-T outline element, in µm."""
+    import geopandas as gpd
+    import shapely
+    node = g["shapes"][spec["element"]]
+    df = gpd.read_parquet(Path(spec["store"]) / "shapes" / spec["element"] / "shapes.parquet")
+    S = app._shape_matrix(node)
+    S[:2, :] *= app._um_per_unit(g, spec)
+    A, t = S[:2, :2], S[:2, 3]
+    geoms = shapely.transform(np.asarray(df.geometry.values), lambda c: c @ A.T + t)
+    idc = spec.get("id_column")
+    ids = np.asarray((df[idc] if idc and idc in df.columns else df.index).astype(str))
+    zc = spec.get("z_column")
+    z = df[zc].to_numpy(float) if zc and zc in df.columns else None
+    step = float(spec.get("z_step_um") or 1.0)
+    return shapely.STRtree(geoms), ids, z, step
+
+
+def cell_index(did):
+    """The dataset's SSAF-T cells for cell_at, built on first use; None when it has none, or its cell table
+    keeps no centre (obsm['spatial'])."""
+    with CELLS_LOCK:
+        if did in CELLS:
+            return CELLS[did]
+        d = app.CATALOG.get(did)
+        out = None
+        try:
+            lay = d["layers"] if d else {}
+            two = next((v for v in lay.values() if v.get("element") == "ssaft_cell_boundaries_2d"), None)
+            three = next((v for v in lay.values() if v.get("element") == "ssaft_cell_boundaries_3d"), None)
+            spec = two or three
+            table = spec and spec.get("table")
+            if spec and table:
+                g = app._open(str(spec["store"]))
+                tb = g["tables"][table]
+                if "obsm" in tb and "spatial" in tb["obsm"]:
+                    ids, types = app._obs_column(g, table, "cellman_annotation", key=spec.get("table_key") or "cell_id")
+                    out = dict(row={str(i): k for k, i in enumerate(ids)}, types=types,
+                               centre=np.asarray(tb["obsm"]["spatial"][:], dtype=float),
+                               two=_outline_index(g, two) if two else None,
+                               three=_outline_index(g, three) if three else None)
+        except Exception:                                        # noqa: BLE001
+            traceback.print_exc()
+            out = None
+        CELLS[did] = out
+        return out
+
+
+def cell_at(did, x, y, z, view):
+    """{cell_type, location} of the SSAF-T cell at (x, y, z) µm, or None."""
+    import shapely
+    ix = cell_index(did)
+    if ix is None:
+        return None
+    p = shapely.Point(x, y)
+    found = None
+    for which in (("three", "two") if view == "3d" else ("two", "three")):
+        o = ix[which]
+        if o is None:
+            continue
+        tree, ids, zs, step = o
+        hit = tree.query(p, predicate="intersects")
+        if not len(hit):
+            continue
+        if zs is not None and z is not None:                     # the plane nearest the cursor's depth
+            dz = np.abs(zs[hit] - z)
+            hit = hit[dz <= max(step, float(dz.min()))]
+            hit = hit[np.argsort(np.abs(zs[hit] - z), kind="stable")]
+        found = str(ids[hit[0]])
+        break
+    k = ix["row"].get(found) if found else None
+    if k is None:
+        return None
+    c = ix["centre"][k]
+    return dict(cell_type=str(ix["types"][k]), location=[round(float(v), 1) for v in c[:3]])
+
+
 class Handler(app.Handler):
     """The site's handler, plus /api/open and the page's desktop script; the cache is served from the
     application-data folder rather than from beside the page."""
@@ -852,6 +942,14 @@ class Handler(app.Handler):
                 traceback.print_exc()
                 return self._json(dict(error=str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}"),
                                   400)
+        if u.path == "/api/cell_at":
+            try:
+                z = q.get("z")
+                return self._json(dict(cell=cell_at(q.get("id", ""), float(q["x"]), float(q["y"]),
+                                                    None if z in (None, "") else float(z), q.get("view", "2d"))))
+            except Exception as e:                               # noqa: BLE001
+                traceback.print_exc()
+                return self._json(dict(error=f"{type(e).__name__}: {e}"), 400)
         # a layer the page asks for that is not cut yet goes to the front of the queue
         if u.path in ("/api/dataset_layer", "/api/dataset_solid"):
             kind = "tiles" if u.path == "/api/dataset_layer" else "solid"

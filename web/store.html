@@ -72,6 +72,10 @@
     background:#11151bee; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px;
     font-size:12px; white-space:nowrap; box-shadow:0 2px 10px #0006; }
   #hoverTip[hidden] { display:none; }
+  #hoverTip { flex-direction:column; align-items:flex-start; gap:1px; }
+  #hoverTip .hl { color:var(--muted); font-size:11px; }
+  #hoverTip .hv { display:flex; align-items:center; gap:6px; margin-bottom:3px; font-variant-numeric:tabular-nums; }
+  #hoverTip .hv:last-child { margin-bottom:0; }
   input.swc { width:16px; height:16px; padding:0; border:1px solid #0006; border-radius:4px; background:none; cursor:pointer; flex:none; }
   input.swc::-webkit-color-swatch-wrapper { padding:0; } input.swc::-webkit-color-swatch { border:none; border-radius:3px; }
   input.swc::-moz-color-swatch { border:none; border-radius:3px; }
@@ -1565,9 +1569,10 @@ function pickAt(x,y){
   const Ls=hoverLayers(); if(!Ls.length) return null;
   if(S.mode2d){
     const V=S.v2, ux=V.cx+(x-canvas.clientWidth/2)*V.upp, uy=V.cy+(y-canvas.clientHeight/2)*V.upp;
+    const uz=S.z2d==null?null:S.z2d;
     for(const L of Ls){
-      const c=L.meta.kind==="shapes"?shapeAt(L,ux,uy):classOf(L,labelAt(L,ux,uy,S.z2d==null?0:S.z2d,true));
-      if(c) return c; }
+      const c=L.meta.kind==="shapes"?shapeAt(L,ux,uy):classOf(L,labelAt(L,ux,uy,uz==null?0:uz,true));
+      if(c) return {c, L, p:[ux,uy,uz], view:"2d"}; }
     return null; }
   const vols=Ls.filter((L)=>L.meta.kind==="labels"); if(!vols.length) return null;
   const {eye,fwd,right,up}=camBasis(), zw=S.zScale;
@@ -1588,18 +1593,44 @@ function pickAt(x,y){
   step=Math.max(step*0.5,(t1-t0)/4000);
   for(let t=t0;t<=t1;t+=step){
     const wx=eye[0]+dir[0]*t, wy=eye[1]+dir[1]*t, wz=eye[2]+dir[2]*t;
-    for(const L of vols){ const c=classOf(L,labelAt(L,wx,-wy,wz/zw,false)); if(c) return c; } }
+    for(const L of vols){ const c=classOf(L,labelAt(L,wx,-wy,wz/zw,false)); if(c) return {c, L, p:[wx,-wy,wz/zw], view:"3d"}; } }
   return null; }
-function hideHover(){ hoverTip.hidden=true; hoverAt=null; }
+// an SSAF-T cell's location: its centre from the cell table (obsm['spatial']), asked of the server once the
+// cursor rests on the cell; the map alone (no segmentation) has no cells, so it shows the cell type only
+const cellLoc={ cache:new Map(), timer:0, ctrl:null, off:false, key:null };
+function isCellLayer(L){ return (L.meta.key||"").startsWith("ssaft_cells"); }
+function locKey(h){ return `${h.L.ds}|${h.view}|${Math.round(h.p[0])}|${Math.round(h.p[1])}|${h.p[2]==null?"":Math.round(h.p[2]*2)}`; }
+function askLocation(h,key){
+  clearTimeout(cellLoc.timer);
+  cellLoc.timer=setTimeout(async()=>{
+    if(cellLoc.ctrl) cellLoc.ctrl.abort(); const ctrl=cellLoc.ctrl=new AbortController();
+    const q=new URLSearchParams({id:h.L.ds, x:h.p[0], y:h.p[1], view:h.view}); if(h.p[2]!=null) q.set("z",h.p[2]);
+    try{ const r=await fetch(`/api/cell_at?${q}`,{signal:ctrl.signal});
+      if(r.status===404){ cellLoc.off=true; return; }       // a server without cell lookups (the site)
+      const j=await r.json(); cellLoc.cache.set(key,j.cell?j.cell.location:null);
+      if(cellLoc.key===key) renderHover(); }
+    catch(e){ if(e.name!=="AbortError") cellLoc.cache.set(key,null); } },120); }
+let hoverHit=null;
+function renderHover(){
+  const h=hoverHit; if(!h||!hoverAt){ hoverTip.hidden=true; return; }
+  const loc=cellLoc.key?cellLoc.cache.get(cellLoc.key):null;
+  hoverTip.innerHTML=`<div class="hl">cell type</div><div class="hv"><span class="sw" style="background:${clsColor(h.c)}"></span>${esc(h.c.name)}</div>`+
+    (loc?`<div class="hl">location</div><div class="hv">(${loc.map((v)=>(+v).toFixed(1)).join(", ")}) µm</div>`:"");
+  hoverTip.hidden=false;
+  const [,,cx,cy]=hoverAt, w=hoverTip.offsetWidth, ht=hoverTip.offsetHeight;
+  hoverTip.style.left=Math.min(cx+14,window.innerWidth-w-6)+"px";
+  hoverTip.style.top=Math.min(cy+16,window.innerHeight-ht-6)+"px"; }
+function hideHover(){ hoverTip.hidden=true; hoverAt=null; hoverHit=null; cellLoc.key=null; clearTimeout(cellLoc.timer); }
 function showHover(){
   hoverReq=0; if(!hoverAt||ptrs.size){ hideHover(); return; }
-  const [x,y,cx,cy]=hoverAt, c=pickAt(x,y);
-  if(!c){ hoverTip.hidden=true; return; }
-  hoverTip.innerHTML=`<span class="sw" style="background:${clsColor(c)}"></span>${esc(c.name)}`;
-  hoverTip.hidden=false;
-  const w=hoverTip.offsetWidth, h=hoverTip.offsetHeight;
-  hoverTip.style.left=Math.min(cx+14,window.innerWidth-w-6)+"px";
-  hoverTip.style.top=Math.min(cy+16,window.innerHeight-h-6)+"px"; }
+  const [x,y]=hoverAt, h=pickAt(x,y);
+  hoverHit=h; cellLoc.key=null; clearTimeout(cellLoc.timer);
+  if(!h){ hoverTip.hidden=true; return; }
+  if(isCellLayer(h.L)&&h.L.ds&&!cellLoc.off){
+    const key=locKey(h); cellLoc.key=key;
+    if(!cellLoc.cache.has(key)) askLocation(h,key); }
+  renderHover(); }
+
 canvas.addEventListener("pointermove",(e)=>{
   if(ptrs.size||e.buttons){ hideHover(); return; }
   const r=canvas.getBoundingClientRect(); hoverAt=[e.clientX-r.left,e.clientY-r.top,e.clientX,e.clientY];
