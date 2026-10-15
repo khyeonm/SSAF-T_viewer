@@ -10,6 +10,11 @@ dependencies:
   - python=3.11
   - numpy
   - scipy
+  # OpenBLAS, not MKL: conda-forge links numpy/scipy to MKL on Windows, ~500 MB of DLLs in the installed app.
+  # The server's work (ndimage filters, sorting, small coordinate transforms) does not depend on BLAS: the
+  # same builds ran equally fast with identical outputs under both.
+  - libblas=*=*openblas
+  - liblapack=*=*openblas
   - zarr>=3
   - numcodecs
   - pyarrow
