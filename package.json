@@ -1,7 +1,7 @@
 {
   "name": "ssaft-viewer",
   "productName": "SSAF-T Viewer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The SSAF-T cell-type map viewer, for an SSAF-T store (.zarr) on your own computer",
   "author": "PNU CoLab",
   "license": "UNLICENSED",
@@ -80,7 +80,10 @@
     "dmg": {
       "title": "SSAF-T Viewer ${version}",
       "icon": "build-resources/icon-mac.png"
-    }
+    },
+    "electronLanguages": [
+      "en-US"
+    ]
   },
   "repository": "github:khyeonm/SSAF-T_viewer"
 }

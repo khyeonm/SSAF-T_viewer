@@ -153,17 +153,36 @@ def manifest_for(store):
     three_d = has_table and "ssaft_cell_labels_3d" in keys["labels"]
     layers = {}
 
-    # the image: one is shown, the store's others are offered
+    # the image: one is shown, the store's others are offered. Not offered: SSAF-T's own images (the
+    # cell-type map's RGB rendering, the mask image: the map layer shows them) and a z-stack when the store
+    # has a 2D image too (the z-stack is the same stain, plane by plane, and the 2D image is its summary).
     pref = ("morphology_focus", "morphology_mip", "composite", "dapi_zstack", "staining", "he_image")
     ranked = sorted(keys["images"], key=lambda n: next((i for i, p in enumerate(pref) if p in n.lower()), len(pref)))
-    for i, name in enumerate(ranked):
+    shown = []
+    for name in ranked:
         node = g["images"][name]
-        if not app._levels(node):
+        if name.startswith("ssaft_") or not app._levels(node):
             continue
+        ax = app._axes(app._multiscale(node))
+        a = node[app._levels(node)[0]]
+        stack = "z" in ax and a.shape[ax.index("z")] > 1
+        rgb = "c" in ax and a.shape[ax.index("c")] == 3 and str(a.dtype) == "uint8"
+        shown.append((name, stack, rgb))
+    if any(not stack for _, stack, _ in shown):
+        shown = [s for s in shown if not s[1]]
+    n_rgb = sum(rgb for _, _, rgb in shown)
+    for i, (name, _, rgb) in enumerate(shown):
+        node = g["images"][name]
         lv, um = image_level(node, upu)
         ax = app._axes(app._multiscale(node))
         a = node[lv]
-        spec = dict(label=IMAGE_LABEL.get(platform, "Image") if i == 0 else f"Image: {name}",
+        if i == 0:
+            label = IMAGE_LABEL.get(platform, "Image")
+        elif rgb:                                    # a colour slide image beside the stain: the H&E
+            label = "H&E image" if n_rgb == 1 else f"H&E image: {name}"
+        else:
+            label = f"Image: {name}"
+        spec = dict(label=label,
                     type="sdata_image", store=st, element=name, level=lv, um_per_px=um, as_image=True,
                     z0_um=bottom - 1.0, z_um=1.0, show=i == 0)
         if "c" in ax:
@@ -271,6 +290,14 @@ def open_store(path):
             if spec.get("show", True) is not False:
                 JOBS.add(("solid", did, k), prio=20)
     print(f"opened {did}: {store}  layers {list(d['layers'])}", flush=True)
+    # the transcripts' gene index starts now, beside the layers, rather than when the page asks for it after
+    # its first layers have arrived.  It is built in its own process (app._genes_build), so it neither waits
+    # for nor holds up the build queue; a store whose genes are drawn as a grid has no index to build.
+    try:
+        if app._array_genes(d) is None:
+            app.genes_status(d)
+    except Exception:                                            # noqa: BLE001
+        traceback.print_exc()                                    # the page asks again, and reports it
     return did
 
 
@@ -361,8 +388,13 @@ def _genes_subprocess(store, element, st):
     cmd = ([sys.executable] if FROZEN else [sys.executable, str(Path(__file__).resolve())]) + \
         ["--build-genes", str(store), str(element), "--cache", str(app.CACHE)]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)           # Windows: no console window for it
-    pr = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                          encoding="utf-8", errors="replace", creationflags=flags)
+    # stdin=DEVNULL: with --watch-stdin a thread sits in a blocking read on our stdin (the app's pipe).  Left
+    # to inherit, Popen duplicates that handle, and on Windows duplicating a pipe handle with a synchronous
+    # read pending in another thread blocks until the read returns -- which is when the app quits.  The
+    # child was then never started: the genes stayed "building" with nothing in the log.
+    print(f"genes: indexing {element} of {store} in a child process", flush=True)
+    pr = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, encoding="utf-8", errors="replace", creationflags=flags)
     tail = []
     for line in pr.stdout:
         if line.startswith("progress "):
@@ -446,8 +478,31 @@ class _CPU:
     """Stands where app.py expects cupy: tells app._gpu_or_cpu to take the strip path."""
 
 
-def _rows(Z, X):
-    return max(16, int(STRIP // max(1, Z * X)))
+# The classes of a strip are smoothed in parallel threads (scipy.ndimage runs without the GIL), and their
+# results are folded in class order exactly as the serial loop does, so the numbers do not change.  Each
+# thread holds a few float32 copies of the strip, so the strips are cut smaller to keep the peak memory
+# where the serial pass had it.
+WORKERS = max(1, min(os.cpu_count() or 1, 8))
+
+
+def _rows(Z, X, per_worker=0):
+    strip = STRIP * 20.0 / (20.0 + per_worker * WORKERS) if per_worker and WORKERS > 1 else STRIP
+    return max(16, int(strip // max(1, Z * X)))
+
+
+def _in_order(fn, items):
+    """fn over items in WORKERS threads, yielded in the items' order; at most WORKERS results held at once."""
+    from concurrent.futures import ThreadPoolExecutor
+    items = list(items)
+    if WORKERS == 1:
+        for it in items:
+            yield it, fn(it)
+        return
+    with ThreadPoolExecutor(WORKERS) as ex:
+        for i in range(0, len(items), WORKERS):
+            batch = items[i:i + WORKERS]
+            for it, r in zip(batch, ex.map(fn, batch)):
+                yield it, r
 
 
 def _lead_by_class_strips(vol, present, sig, progress, total, cp):
@@ -457,13 +512,13 @@ def _lead_by_class_strips(vol, present, sig, progress, total, cp):
     lead = _big(vol.shape, np.uint8)
     val = _big(vol.shape, np.uint8)
     halo = int(4.0 * sig[1] + 0.5) + 2
-    strips = list(app._strips(Y, _rows(Z, X), halo))
+    strips = list(app._strips(Y, _rows(Z, X, per_worker=8), halo))
     for n, (y0, y1, a0, a1) in enumerate(strips):
         v = vol[:, a0:a1]
         best = np.zeros(v.shape, np.float32)
         ld = np.zeros(v.shape, np.uint8)
-        for k in present:
-            occ = gaussian_filter((v == k).astype(np.float32), sig, mode="nearest")
+        smooth = lambda k, v=v: gaussian_filter((v == k).astype(np.float32), sig, mode="nearest")  # noqa: E731
+        for k, occ in _in_order(smooth, present):
             win = occ > best
             best[win] = occ[win]
             ld[win] = k
@@ -506,24 +561,28 @@ def _slots_strips(cp, ids, slot8, lut, K, sig, reach, progress):
     lead = _big(ids.shape, np.uint8)
     val = _big(ids.shape, np.uint8)
     cls = _big(ids.shape, np.uint8)
-    strips = list(app._strips(Y, _rows(Z, X), halo))
+    strips = list(app._strips(Y, _rows(Z, X, per_worker=16), halo))
     for n, (y0, y1, a0, a1) in enumerate(strips):
         a = ids[:, a0:a1]
         sv = slot8[a]
         best = np.zeros(a.shape, np.float32)
         ld = np.zeros(a.shape, np.uint8)
         cl = np.zeros(a.shape, np.uint8)
-        for k in range(K + 1):                                   # slot 0: the empty background
+
+        def smooth(k, a=a, sv=sv):
             m = sv == k
             occ = gaussian_filter(m.astype(np.float32), sig, mode="nearest")
+            # the one cell of this slot within reach (slot 0 is the empty background)
+            near = maximum_filter(np.where(m, a, 0), size=reach, mode="constant", cval=0) if k > 0 else None
+            return occ, near
+
+        for k, (occ, near) in _in_order(smooth, range(K + 1)):
             win = occ > best
             best[win] = occ[win]
             ld[win] = k
-            if k > 0:                                            # the one cell of this slot within reach
-                near = maximum_filter(np.where(m, a, 0), size=reach, mode="constant", cval=0)
+            if near is not None:
                 cl[win] = lut[near[win]]
-                del near
-            del m, occ, win
+            del occ, near, win
         c = np.s_[:, y0 - a0:y1 - a0]
         lead[:, y0:y1] = ld[c]
         val[:, y0:y1] = np.clip(np.rint(best[c] * 255.0), 0, 255).astype(np.uint8)
