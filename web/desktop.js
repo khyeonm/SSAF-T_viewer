@@ -11,7 +11,10 @@
  *     becomes an Open button that sends the store to the server, so it gets the full viewer;
  *   - a .zarr folder dropped anywhere on the window is opened the same way;
  *   - until a store is open, the panel holds only its title and the Open block; the rest of it, and the
- *     controls over the view, appear once a store is open.
+ *     controls over the view, appear once a store is open;
+ *   - a store's sections come as their loading ends (Show, the layers and the view with the first layer on
+ *     screen, each layer's block with its layer, Gene expression with the gene list), and a ring turns beside
+ *     the title while anything is still loading.
  * The page's functions are classic-script globals, so they are called and replaced by name.
  */
 'use strict';
@@ -28,8 +31,10 @@
 	async function show(d) {
 		$('#dsSelect').innerHTML = `<option value="${esc(d.id)}">${esc(d.title)}</option>`;
 		document.title = `${d.title} — SSAF-T Viewer`;
-		empty(false);                          // the panel shows the layers coming in
+		const run = stage.start();
+		empty(false);
 		await selectDataset(d);
+		if (run === stage.run) stage.base = true;     // the layers it opens with are on screen
 	}
 
 	// the page's boot calls this once the server has answered /api/config
@@ -54,7 +59,7 @@
 	// catalog title into it.
 	const brand = document.createElement('div');
 	brand.className = 'desk-brand';
-	brand.innerHTML = '<div class="desk-word">SSAF-T <span>Viewer</span></div>';
+	brand.innerHTML = '<div class="desk-word">SSAF-T <span>Viewer</span><i id="deskSpin" hidden title="Loading"></i></div>';
 	$('#panel h1').hidden = true;
 	brand.append($('#sub'));
 	$('#panel .head').prepend(brand);
@@ -88,6 +93,38 @@
 		document.body.classList.toggle('desk-empty', on);
 	}
 	empty(true);
+
+	/* ---------------------------------------------------------------- loading, section by section */
+	// A store's sections are hidden while it loads (body.desk-staging) and come one by one: st-layers once the
+	// first layer is on screen (Show, Layers, View, the toolbar), st-genes once the gene list is in.  A layer's
+	// own block appears with its layer (the page renders only loaded layers), its Voxels / Solid buttons when
+	// its surfaces are ready (store.html).  The ring by the title turns while anything is loading: a layer being
+	// fetched, surfaces being made, the gene list; so it also returns when a layer is ticked later.
+	const stage = {
+		run: 0, base: false, genes: false,
+		start() {
+			this.run++; this.base = false; this.genes = false;
+			document.body.classList.add('desk-staging');
+			document.body.classList.remove('st-layers', 'st-genes');
+			return this.run;
+		}
+	};
+	const loadGenesPage = loadGenes;
+	loadGenes = async (ds) => {
+		const run = stage.run;
+		try { return await loadGenesPage(ds); }
+		finally { if (run === stage.run) stage.genes = true; }
+	};
+	const spin = $('#deskSpin');
+	setInterval(() => {
+		const S = window.__viewer, body = document.body;
+		if (body.classList.contains('desk-empty')) { spin.hidden = true; return; }
+		if (S.layers.length) body.classList.add('st-layers');
+		if (stage.genes) body.classList.add('st-genes');
+		const busy = !stage.base || !stage.genes || pending.size > 0 || S.layers.some((L) => L.solidWait);
+		spin.hidden = !busy;
+		if (!busy) body.classList.remove('desk-staging');
+	}, 300);
 
 	/* ---------------------------------------------------------------- drag and drop */
 	const veil = Object.assign(document.createElement('div'), { id: 'deskDrop', hidden: true });

@@ -18,3 +18,15 @@ body.desk-empty #catalogSection > h2, body.desk-empty #dsShow, body.desk-empty #
 body.desk-empty #geneSection, body.desk-empty #viewSection,
 body.desk-empty #toolbar, body.desk-empty #triad, body.desk-empty #help { display: none !important; }
 #localOpen #status { margin-top: 8px; }
+
+/* loading a store: its sections come as they are ready (desktop.js) */
+body.desk-staging:not(.st-layers) #catalogSection > h2, body.desk-staging:not(.st-layers) #dsShow,
+body.desk-staging:not(.st-layers) #layersHead, body.desk-staging:not(.st-layers) #layers,
+body.desk-staging:not(.st-layers) #viewSection, body.desk-staging:not(.st-layers) #toolbar,
+body.desk-staging:not(.st-layers) #triad, body.desk-staging:not(.st-layers) #help,
+body.desk-staging:not(.st-genes) #geneSection { display: none !important; }
+/* the ring by the title while anything loads */
+#deskSpin { display: inline-block; width: 13px; height: 13px; margin-left: 9px; vertical-align: 1px; border-radius: 50%;
+	border: 2px solid var(--line); border-top-color: var(--accent); animation: desk-spin .8s linear infinite; }
+#deskSpin[hidden] { display: none; }
+@keyframes desk-spin { to { transform: rotate(360deg); } }

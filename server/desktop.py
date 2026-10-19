@@ -868,14 +868,31 @@ def cell_index(did):
         return out
 
 
+def _ring(geom, cap=256):
+    """The outline the page tests the cursor against: the exterior of the (largest) polygon, in µm, thinned
+    to at most `cap` vertices."""
+    import shapely
+    if geom.geom_type == "MultiPolygon":
+        geom = max(geom.geoms, key=lambda g: g.area)
+    if geom.geom_type != "Polygon" or geom.is_empty:
+        return None
+    xy = np.asarray(geom.exterior.coords)[:-1]
+    if len(xy) > cap:
+        xy = xy[np.linspace(0, len(xy) - 1, cap).astype(int)]
+    return np.round(xy, 2).tolist()
+
+
 def cell_at(did, x, y, z, view):
-    """{cell_type, location} of the SSAF-T cell at (x, y, z) µm, or None."""
+    """{cell_type, location, id, ring, z, step} of the SSAF-T cell at (x, y, z) µm, or None.
+
+    `ring` is the cell's outline (in 3D, on the plane the cursor is at, `z`, `step` thick): while the cursor
+    stays inside it the page answers itself, without asking again for every move within the same cell."""
     import shapely
     ix = cell_index(did)
     if ix is None:
         return None
     p = shapely.Point(x, y)
-    found = None
+    found, ring, zc, dz = None, None, None, None
     for which in (("three", "two") if view == "3d" else ("two", "three")):
         o = ix[which]
         if o is None:
@@ -889,12 +906,16 @@ def cell_at(did, x, y, z, view):
             hit = hit[dz <= max(step, float(dz.min()))]
             hit = hit[np.argsort(np.abs(zs[hit] - z), kind="stable")]
         found = str(ids[hit[0]])
+        ring = _ring(tree.geometries[hit[0]])
+        if zs is not None:
+            zc, dz = float(zs[hit[0]]), step
         break
     k = ix["row"].get(found) if found else None
     if k is None:
         return None
     c = ix["centre"][k]
-    return dict(cell_type=str(ix["types"][k]), location=[round(float(v), 1) for v in c[:3]])
+    return dict(cell_type=str(ix["types"][k]), location=[round(float(v), 1) for v in c[:3]], id=found,
+                ring=ring, z=zc, step=dz)
 
 
 class Handler(app.Handler):

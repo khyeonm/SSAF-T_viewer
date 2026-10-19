@@ -97,6 +97,7 @@
   label.show { display:flex; gap:9px; align-items:center; padding:5px 2px; font-size:13.5px; cursor:pointer; }
   label.show input { width:16px; height:16px; accent-color:var(--accent); }
   #status.err { color:#ff8a80; }
+
   .gene { display:grid; grid-template-columns:16px 14px 1fr auto; gap:7px; align-items:center; padding:3px 8px;
     border-bottom:1px solid #20262f; cursor:pointer; font-size:12px; }
   .gene:last-child { border-bottom:0; }
@@ -1597,38 +1598,59 @@ function pickAt(x,y){
   return null; }
 // an SSAF-T cell's location: its centre from the cell table (obsm['spatial']), asked of the server once the
 // cursor rests on the cell; the map alone (no segmentation) has no cells, so it shows the cell type only
-const cellLoc={ cache:new Map(), timer:0, ctrl:null, off:false, key:null };
+// The answer carries the cell's outline (its plane's, in 3D): while the cursor stays inside an outline already
+// known, the location is shown at once and nothing is asked, so moving within one cell neither waits nor
+// blinks.  Only a cursor on a cell not yet seen asks, after a short rest.
+const cellLoc={ cells:[], miss:new Map(), timer:0, ctrl:null, off:false, shown:null };
 function isCellLayer(L){ return (L.meta.key||"").startsWith("ssaft_cells"); }
-function locKey(h){ return `${h.L.ds}|${h.view}|${Math.round(h.p[0])}|${Math.round(h.p[1])}|${h.p[2]==null?"":Math.round(h.p[2]*2)}`; }
-function askLocation(h,key){
+function inRing(x,y,r){ let inside=false;
+  for(let i=0,j=r.length-1;i<r.length;j=i++){ const [xi,yi]=r[i], [xj,yj]=r[j];
+    if(((yi>y)!==(yj>y)) && x<(xj-xi)*(y-yi)/(yj-yi)+xi) inside=!inside; }
+  return inside; }
+function knownCell(h){                       // a cell already answered whose outline holds the cursor
+  for(const c of cellLoc.cells){
+    if(c.ds!==h.L.ds||c.view!==h.view||!inRing(h.p[0],h.p[1],c.ring)) continue;
+    if(c.z!=null&&h.p[2]!=null&&Math.abs(h.p[2]-c.z)>c.step/2+1e-6) continue;
+    return c; }
+  return null; }
+function missKey(h){ return `${h.L.ds}|${h.view}|${Math.round(h.p[0])}|${Math.round(h.p[1])}|${h.p[2]==null?"":Math.round(h.p[2])}`; }
+function askLocation(h){
   clearTimeout(cellLoc.timer);
   cellLoc.timer=setTimeout(async()=>{
     if(cellLoc.ctrl) cellLoc.ctrl.abort(); const ctrl=cellLoc.ctrl=new AbortController();
     const q=new URLSearchParams({id:h.L.ds, x:h.p[0], y:h.p[1], view:h.view}); if(h.p[2]!=null) q.set("z",h.p[2]);
     try{ const r=await fetch(`/api/cell_at?${q}`,{signal:ctrl.signal});
       if(r.status===404){ cellLoc.off=true; return; }       // a server without cell lookups (the site)
-      const j=await r.json(); cellLoc.cache.set(key,j.cell?j.cell.location:null);
-      if(cellLoc.key===key) renderHover(); }
-    catch(e){ if(e.name!=="AbortError") cellLoc.cache.set(key,null); } },120); }
+      const j=await r.json(), c=j.cell;
+      if(c&&c.ring&&c.ring.length>2){
+        cellLoc.cells.unshift({ ds:h.L.ds, view:h.view, ring:c.ring, z:c.z, step:c.step||1, loc:c.location });
+        cellLoc.cells.length=Math.min(cellLoc.cells.length,200); }
+      else cellLoc.miss.set(missKey(h),c?c.location:null);
+      if(hoverHit&&isCellLayer(hoverHit.L)){                  // the cursor may have moved on meanwhile
+        const k=knownCell(hoverHit); cellLoc.shown=k?k.loc:(cellLoc.miss.get(missKey(hoverHit))||null); renderHover(); } }
+    catch(e){ if(e.name!=="AbortError") cellLoc.miss.set(missKey(h),null); } },40); }
 let hoverHit=null;
 function renderHover(){
   const h=hoverHit; if(!h||!hoverAt){ hoverTip.hidden=true; return; }
-  const loc=cellLoc.key?cellLoc.cache.get(cellLoc.key):null;
+  const loc=cellLoc.shown;
   hoverTip.innerHTML=`<div class="hl">cell type</div><div class="hv"><span class="sw" style="background:${clsColor(h.c)}"></span>${esc(h.c.name)}</div>`+
     (loc?`<div class="hl">location</div><div class="hv">(${loc.map((v)=>(+v).toFixed(1)).join(", ")}) µm</div>`:"");
   hoverTip.hidden=false;
   const [,,cx,cy]=hoverAt, w=hoverTip.offsetWidth, ht=hoverTip.offsetHeight;
   hoverTip.style.left=Math.min(cx+14,window.innerWidth-w-6)+"px";
   hoverTip.style.top=Math.min(cy+16,window.innerHeight-ht-6)+"px"; }
-function hideHover(){ hoverTip.hidden=true; hoverAt=null; hoverHit=null; cellLoc.key=null; clearTimeout(cellLoc.timer); }
+function hideHover(){ hoverTip.hidden=true; hoverAt=null; hoverHit=null; cellLoc.shown=null; clearTimeout(cellLoc.timer); }
 function showHover(){
   hoverReq=0; if(!hoverAt||ptrs.size){ hideHover(); return; }
   const [x,y]=hoverAt, h=pickAt(x,y);
-  hoverHit=h; cellLoc.key=null; clearTimeout(cellLoc.timer);
-  if(!h){ hoverTip.hidden=true; return; }
+  hoverHit=h; clearTimeout(cellLoc.timer);
+  if(!h){ cellLoc.shown=null; hoverTip.hidden=true; return; }
   if(isCellLayer(h.L)&&h.L.ds&&!cellLoc.off){
-    const key=locKey(h); cellLoc.key=key;
-    if(!cellLoc.cache.has(key)) askLocation(h,key); }
+    const k=knownCell(h);
+    if(k) cellLoc.shown=k.loc;
+    else if(cellLoc.miss.has(missKey(h))) cellLoc.shown=cellLoc.miss.get(missKey(h));
+    else { cellLoc.shown=null; askLocation(h); } }
+  else cellLoc.shown=null;
   renderHover(); }
 
 canvas.addEventListener("pointermove",(e)=>{
@@ -1779,7 +1801,7 @@ function renderLayers(){
       const kc=kw.querySelector("input"); kc.onchange=()=>{L.keyWhite=kc.checked;requestDraw();};
       el.appendChild(kw);
     } else if(m.classes){
-      if(L.canSolid){
+      if(L.canSolid&&(L.solid||L.solidDone||L.picked)){
         const rm=document.createElement("div"); rm.className="row"; rm.style.margin="7px 0 3px";
         rm.innerHTML=`<button class="${L.mode==="voxel"?"on":""}">Voxels</button><button class="${L.mode==="solid"?"on":""}">Solid surfaces</button>`;
         const [bv,bs]=rm.querySelectorAll("button");
@@ -1978,8 +2000,8 @@ async function ensureSolid(L){
       if(L.mode==="solid") renderLayers();
       await new Promise((ok)=>setTimeout(ok,2000));
     }
-  } finally { L.solidWait=false; }
-  renderLayers(); await syncSolid(L);
+  } finally { L.solidWait=false; L.solidDone=true; renderLayers(); }   // done or failed: its buttons show
+  await syncSolid(L);
 }
 async function loadSolidVol(L,key,file,dims){
   if(L.solidVol.has(key)) return;
@@ -2035,11 +2057,12 @@ async function loadGenes(ds){
   const gen=GS.gen; let j;
   for(;;){                                   // the server indexes a dataset's transcripts once, in the background
     const r=await fetch(`/api/genes?id=${encodeURIComponent(ds.id)}`);
-    if(r.status===404) return;               // a server without genes: the section stays hidden
+    if(r.status===404){ $("#geneSection").hidden=true; return; }   // a server without genes: no section
     j=await r.json(); if(j.error) throw new Error(j.error);
     if(gen!==GS.gen) return;
     if(j.status!=="building") break;
-    $("#geneSection").hidden=false; $("#geneNote").textContent="indexing this dataset's transcripts on the server ...";
+    $("#geneSection").hidden=false;
+    $("#geneNote").textContent="indexing this dataset's transcripts"+(j.total?` ... ${Math.round(100*j.done/j.total)}%`:" ...");
     await new Promise((ok)=>setTimeout(ok,1500)); }
   if(gen!==GS.gen) return;
   if(!j.genes||!j.genes.length){ $("#geneSection").hidden=true; return; }
