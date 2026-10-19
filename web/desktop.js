@@ -89,6 +89,15 @@
 	// the view controls (and the toolbar, axes and help over the view) come with a store.  The status line moves
 	// from the bottom of the view controls to under the Open button, so "reading …" and errors show either way.
 	$('#localOpen').append($('#status'));
+	// the status line is the page's log (progress of every layer, tile and gene): hidden unless it reports an
+	// error, or Ctrl/Cmd+Shift+P shows it, with a link to the server's log file
+	const logLink = Object.assign(document.createElement('div'), { className: 'desk-links desk-loglink' });
+	logLink.innerHTML = '<a href="#">Server log file</a>';
+	$('#localOpen').append(logLink);
+	if (app) {
+		logLink.firstChild.onclick = (e) => { e.preventDefault(); app.showLog(); };
+		app.onToggleLog(() => document.body.classList.toggle('desk-log'));
+	}
 	function empty(on) {
 		document.body.classList.toggle('desk-empty', on);
 	}

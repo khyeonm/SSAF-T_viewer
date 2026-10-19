@@ -1353,7 +1353,8 @@ function inView(L){ return !L.view || (L.view==="2d")===S.mode2d || isPicture(L)
 function has3D(){ return S.layers.some((L)=>L.meta.dims&&L.meta.dims.z>1&&L.view!=="2d"); }
 function syncViewButtons(){
   const ok=has3D(), b=$("#m3d");
-  b.disabled=!ok; b.style.opacity=ok?1:0.4; b.style.cursor=ok?"pointer":"not-allowed";
+  // the 2D slice is always there (any volume has planes); the 3D button only when there is depth to show
+  b.disabled=!ok; b.hidden=!ok;
   b.title=ok?"The volume, rotatable":"This dataset is a single plane: there is no 3D view";
   if(S.viewPicked) return;
   // the flat layers of a dataset can arrive before its deep ones, so the drop to 2D is undone as

@@ -17,7 +17,11 @@
 body.desk-empty #catalogSection > h2, body.desk-empty #dsShow, body.desk-empty #layersHead, body.desk-empty #layers,
 body.desk-empty #geneSection, body.desk-empty #viewSection,
 body.desk-empty #toolbar, body.desk-empty #triad, body.desk-empty #help { display: none !important; }
-#localOpen #status { margin-top: 8px; }
+#localOpen #status { margin-top: 8px; display: none; }
+/* the log line: errors always, everything with Ctrl/Cmd+Shift+P (desktop.js) */
+#localOpen #status.err, body.desk-log #localOpen #status { display: block; }
+.desk-loglink { display: none; }
+body.desk-log .desk-loglink { display: block; }
 
 /* loading a store: its sections come as they are ready (desktop.js) */
 body.desk-staging:not(.st-layers) #catalogSection > h2, body.desk-staging:not(.st-layers) #dsShow,

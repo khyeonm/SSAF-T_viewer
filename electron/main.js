@@ -193,7 +193,7 @@ function shortcut(e, input) {
 	if (mod && !input.shift && key === 'o') { e.preventDefault(); pick().then(openPath); }
 	else if ((mod && input.shift && key === 'i') || input.key === 'F12') { e.preventDefault(); win.webContents.toggleDevTools(); }
 	else if ((mod && key === 'r') || input.key === 'F5') { e.preventDefault(); win.webContents.reload(); }
-	else if (mod && input.shift && key === 'p') { e.preventDefault(); showLog(); }   // the server log: not in the UI
+	else if (mod && input.shift && key === 'p') { e.preventDefault(); win.webContents.send('toggle-log'); }   // the log: not in the UI
 }
 
 /* ------------------------------------------------------------------ opening stores */
@@ -219,7 +219,7 @@ const storeArgs = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a 
 ipcMain.handle('open-dialog', () => pick());
 ipcMain.on('opened', (_e, p) => { if (typeof p === 'string') app.addRecentDocument(p); });
 ipcMain.on('clear-cache', () => clearCache());
-const showLog = () => shell.showItemInFolder(path.join(dirs().logs, 'server.log'));
+ipcMain.on('show-log', () => shell.showItemInFolder(path.join(dirs().logs, 'server.log')));
 
 /* ------------------------------------------------------------------ cache, menu */
 async function clearCache() {

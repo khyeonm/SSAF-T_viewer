@@ -126,6 +126,38 @@ def title_for(path):
     return path.name
 
 
+def bins_um_per_unit(g, store, shapes):
+    """µm per `global` unit of a Visium HD store, from its bins: `<sample>_square_002um` are squares of 2 µm,
+    so their side in global units gives the scale.  app._um_per_unit reads it from the transcripts, which an
+    array platform's store does not have; there `global` is the full-resolution image's pixels (0.27 µm), and
+    taking it for µm put the SSAF-T signal samples (in µm) at a quarter of the tissue's size and every scale
+    bar 3.7x off.  None when the store has no such bins."""
+    import pyarrow.parquet as pq
+    import shapely
+    best = None
+    for name in shapes:
+        m = re.search(r"square_(\d+)um$", name)
+        if not m:
+            continue
+        um = int(m.group(1))
+        if best is None or um < best[0]:
+            best = (um, name)
+    if best is None:
+        return None
+    um, name = best
+    try:
+        f = Path(store) / "shapes" / name / "shapes.parquet"
+        t = pq.read_table(f, columns=["geometry"]).slice(0, 2000)
+        geoms = shapely.from_wkb(t.column("geometry").to_numpy(zero_copy_only=False))
+        b = shapely.bounds(geoms)
+        S = app._shape_matrix(g["shapes"][name])
+        side = float(np.median(b[:, 2] - b[:, 0])) * float(np.hypot(S[0, 0], S[1, 0]))
+        return um / side if side > 0 else None
+    except Exception:                                            # noqa: BLE001
+        traceback.print_exc()
+        return None
+
+
 def manifest_for(store):
     """A catalog record for one SSAF-T store, as the published records are written (viewer/datasets.json).
 
@@ -147,7 +179,8 @@ def manifest_for(store):
     st = str(store)
     platform = guess_platform(keys["images"], keys["shapes"], keys["points"])
     cmap = "ssaft_celltype_map" if "ssaft_celltype_map" in keys["labels"] else None
-    upu = app._um_per_unit(g, {})
+    upu_given = None if keys["points"] else bins_um_per_unit(g, store, keys["shapes"])
+    upu = upu_given or app._um_per_unit(g, {})
     bottom, top = map_z(g, cmap, upu) if cmap else (0.0, 1.0)
     has_table = "ssaft_cells" in keys["tables"]
     three_d = has_table and "ssaft_cell_labels_3d" in keys["labels"]
@@ -156,12 +189,17 @@ def manifest_for(store):
     # the image: one is shown, the store's others are offered. Not offered: SSAF-T's own images (the
     # cell-type map's RGB rendering, the mask image: the map layer shows them) and a z-stack when the store
     # has a 2D image too (the z-stack is the same stain, plane by plane, and the 2D image is its summary).
+    # Nor Space Ranger's hires / lowres copies of the full image: they are placed only in their own
+    # downscaled coordinate systems, so read in the shared frame they would land at the wrong size.
+    full = any(n.endswith("_full_image") for n in keys["images"])
     pref = ("morphology_focus", "morphology_mip", "composite", "dapi_zstack", "staining", "he_image")
     ranked = sorted(keys["images"], key=lambda n: next((i for i, p in enumerate(pref) if p in n.lower()), len(pref)))
     shown = []
     for name in ranked:
         node = g["images"][name]
         if name.startswith("ssaft_") or not app._levels(node):
+            continue
+        if full and re.search(r"_(hires|lowres)_image$", name):
             continue
         ax = app._axes(app._multiscale(node))
         a = node[app._levels(node)[0]]
@@ -228,6 +266,9 @@ def manifest_for(store):
         layers[f"shapes_{name}"] = dict(label=label, type="sdata_shapes", store=st, element=name,
                                         z_um=top + 0.05, color=color, show=False)
 
+    if upu_given:                                # every layer read in that one frame
+        for v in layers.values():
+            v["um_per_unit"] = upu_given
     if not layers:
         raise ValueError("nothing to show: the store has no SSAF-T cell-type map, image or outlines "
                          f"(images {keys['images']}, labels {keys['labels']}, shapes {keys['shapes']})")
@@ -798,6 +839,90 @@ def _obs_column(g, table, column, key=None):
 
 
 app._obs_column = _obs_column
+
+
+ARRAY_FRAMES = {}
+
+
+def array_frame(g, store):
+    """2x3 affine from SSAF-T's sample coordinates on a Visium HD store to its `global` frame, or None.
+
+    SSAF-T writes its signal samples (tables/ssaft_downsampled_vectors, obsm['spatial']) in the bin array's
+    own µm: array_col x bin size, array_row x bin size; `global` is the full-resolution image's pixels, with y
+    the other way up.  The bins table keeps both for every bin (obs array_row / array_col, obsm['spatial']),
+    so the relation is fitted from it (least squares; residual well under a pixel)."""
+    key = str(store)
+    if key in ARRAY_FRAMES:
+        return ARRAY_FRAMES[key]
+    out = None
+    try:
+        for name in (sorted(g["tables"].group_keys()) if "tables" in g else []):
+            m = re.search(r"square_(\d+)um$", name)
+            t = g["tables"][name]
+            if not m or "obs" not in t or "obsm" not in t or "spatial" not in t["obsm"]:
+                continue
+            obs = t["obs"]
+            if "array_row" not in obs or "array_col" not in obs:
+                continue
+            bin_um = int(m.group(1))
+            n = obs["array_row"].shape[0]
+            pick = np.unique(np.linspace(0, n - 1, min(n, 200000)).astype(np.int64))
+            r = np.asarray(obs["array_row"][:], float)[pick] * bin_um
+            c = np.asarray(obs["array_col"][:], float)[pick] * bin_um
+            xy = np.asarray(t["obsm"]["spatial"][:], float)[pick]
+            A = np.c_[c, r, np.ones_like(r)]
+            fx = np.linalg.lstsq(A, xy[:, 0], rcond=None)[0]
+            fy = np.linalg.lstsq(A, xy[:, 1], rcond=None)[0]
+            out = np.vstack([fx, fy])
+            print(f"array frame of {name}: x = {fx.round(4).tolist()}, y = {fy.round(4).tolist()}", flush=True)
+            break
+    except Exception:                                            # noqa: BLE001
+        traceback.print_exc()
+        out = None
+    ARRAY_FRAMES[key] = out
+    return out
+
+
+def gene_grid(spec, gene):
+    """app.gene_grid, its cached image keyed also by the µm per unit it was placed with: a store whose scale
+    the app now reads (bins_um_per_unit) must not be drawn from the grid cut when it was taken for µm."""
+    g = app._open(str(spec["store"]))
+    t = app._vector_table(g)
+    if t is None:
+        raise KeyError("this dataset has no binned expression")
+    names = [str(x) for x in np.asarray(g[f"tables/{t}/var"]["gene"][:]).tolist()]
+    if gene not in names:
+        raise KeyError(gene)
+    lat = app._grid_lattice(spec)
+    key = app._key(t="ggrid", p=str(spec["store"]), n=spec["element"], g=gene, mt=app._mtime(spec),
+                   m=app.GRID_MAX, u=spec.get("um_per_unit"), v="array1")
+    cached = app.CACHE / f"{key}.bin.gz"
+    if cached.exists():
+        return f"cache/{cached.name}", lat
+    col = np.asarray(g[f"tables/{t}/X"][:, names.index(gene)], np.float32)
+    xy = np.asarray(g[f"tables/{t}/obsm/spatial"][:], np.float64)
+    T = array_frame(g, spec["store"])
+    if T is not None:                            # Visium HD: the bin array's µm -> global -> µm
+        upu = app._um_per_unit(g, spec)
+        xs = (xy @ T[:, :2].T + T[:, 2]) * upu
+        xs, ys = xs[:, 0], xs[:, 1]
+    else:                                        # app's own reading: µm or global units, whichever fits
+        k = app._sample_scale(g, spec, xy, lat)
+        xs, ys = xy[:, 0] * k, xy[:, 1] * k
+    ix = np.floor((xs - lat["ox"]) / lat["vx"]).astype(np.int64)
+    iy = np.floor((ys - lat["oy"]) / lat["vy"]).astype(np.int64)
+    ok = (ix >= 0) & (iy >= 0) & (ix < lat["w"]) & (iy < lat["h"]) & (col > 0)
+    grid = np.zeros(lat["h"] * lat["w"], np.float32)
+    np.maximum.at(grid, iy[ok] * lat["w"] + ix[ok], col[ok])
+    hi = float(np.percentile(grid[grid > 0], 99.5)) if (grid > 0).any() else 1.0
+    out = np.clip(grid * (255.0 / max(hi, 1e-9)), 0, 255).astype(np.uint8)
+    import gzip
+    with gzip.open(cached, "wb", compresslevel=6) as fh:
+        fh.write(out.tobytes())
+    return f"cache/{cached.name}", lat
+
+
+app.gene_grid = gene_grid
 _label_volume, _instance_volume = app.label_volume, app.instance_volume
 app.label_volume = label_volume
 app.instance_volume = instance_volume

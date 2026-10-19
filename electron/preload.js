@@ -1,6 +1,6 @@
 /**
  * What the page may ask of the app (web/desktop.js uses it): a file dialog, the path of a file dropped on
- * the window, the stores a launch or the Dock opens, and clearing the cache.  Nothing else of Node or Electron reaches the page.
+ * the window, the stores a launch or the Dock opens, clearing the cache, and the log.  Nothing else of Node or Electron reaches the page.
  */
 'use strict';
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
@@ -15,5 +15,9 @@ contextBridge.exposeInMainWorld('ssaft', {
 	/** a store opened: for the OS's recent documents */
 	opened: (p) => ipcRenderer.send('opened', p),
 	/** empty the cache of prepared tiles (asks first; restarts the server) */
-	clearCache: () => ipcRenderer.send('clear-cache')
+	clearCache: () => ipcRenderer.send('clear-cache'),
+	/** Ctrl/Cmd+Shift+P: show or hide the log line */
+	onToggleLog: (cb) => ipcRenderer.on('toggle-log', () => cb()),
+	/** show the server's log file in the file manager */
+	showLog: () => ipcRenderer.send('show-log')
 });
