@@ -107,7 +107,7 @@ def image_level(node, upu):
         shp = dict(zip(ax, a.shape)) if ax else dict(zip(("y", "x"), a.shape[-2:]))
         M = app._element_matrix(node, lv)
         um = float(np.sqrt(abs(np.linalg.det(M[:2, :2])))) * upu
-        best = (lv, round(um, 4))
+        best = (lv, round(um, 9))               # exact: rgb_tiles_for can then copy pixels, not resample
         if shp.get("y", 1) * shp.get("x", 1) <= IMAGE_BUDGET:
             return best
     return best
@@ -147,8 +147,9 @@ def bins_um_per_unit(g, store, shapes):
     um, name = best
     try:
         f = Path(store) / "shapes" / name / "shapes.parquet"
-        t = pq.read_table(f, columns=["geometry"]).slice(0, 2000)
-        geoms = shapely.from_wkb(t.column("geometry").to_numpy(zero_copy_only=False))
+        # the first 2000 bins are enough for a median side; reading the whole column was 200 MB per open
+        batch = next(pq.ParquetFile(f).iter_batches(batch_size=2000, columns=["geometry"]))
+        geoms = shapely.from_wkb(batch.column("geometry").to_numpy(zero_copy_only=False))
         b = shapely.bounds(geoms)
         S = app._shape_matrix(g["shapes"][name])
         side = float(np.median(b[:, 2] - b[:, 0])) * float(np.hypot(S[0, 0], S[1, 0]))
@@ -841,6 +842,107 @@ def _obs_column(g, table, column, key=None):
 app._obs_column = _obs_column
 
 
+_rgb_tiles_for = app.rgb_tiles_for
+
+
+def rgb_tiles_for(spec, tile=2048, ov_factor=8, progress=None):
+    """app.rgb_tiles_for, without the resampling when there is nothing to resample.
+
+    app resamples every picture onto the µm lattice through its transform (bilinear, through the inverse of
+    the affine): right for a rotated or rescaled image, but for an image whose pixels already ARE that lattice
+    (no rotation, one pixel = `um_per_px`) the bilinear lookup at each pixel's own centre returns the pixel
+    itself.  That pass was 35 of the 45 s a Visium HD H&E took; here those pixels are copied (and flipped
+    where the transform flips).  Anything else goes to app's own resampling."""
+    import gzip  # noqa: F401
+    from PIL import Image
+    um = float(spec.get("um_per_px", 1.0))
+    key = app._key(t="rgb", p=str(spec["store"]), n=spec["element"], l=spec.get("level"), um=um,
+                   tile=int(tile), o=int(ov_factor), u=spec.get("um_per_unit"),
+                   z0=spec.get("z0_um"), zu=spec.get("z_um"), bg=spec.get("background_key"),
+                   **({} if spec.get("plane") is None else dict(pl=spec["plane"])),
+                   **({} if spec.get("channel") is None else dict(c=spec["channel"])),
+                   mt=app._mtime(spec), v=3)
+    cached = app.CACHE / f"{key}_rgb.json"
+    if cached.exists():
+        return json.loads(cached.read_text())
+    g = app._open(str(spec["store"]))
+    node = g["images"][spec["element"]]
+    lv = spec.get("level") or app._levels(node)[0]
+    S = app._element_matrix(node, lv)
+    S[:2, :] *= app._um_per_unit(g, spec)
+    L = S[:2, :2]
+    axis_aligned = abs(L[0, 1]) < 1e-9 * abs(L[0, 0]) and abs(L[1, 0]) < 1e-9 * abs(L[1, 1])
+    if not (axis_aligned and abs(abs(L[0, 0]) - um) < 1e-6 * um and abs(abs(L[1, 1]) - um) < 1e-6 * um):
+        return _rgb_tiles_for(spec, tile=tile, ov_factor=ov_factor, progress=progress)
+    a = node[lv]
+    axn = app._axes(app._multiscale(node))
+    sel = [slice(None)] * len(axn)
+    if "z" in axn and spec.get("plane") is not None:
+        nz = a.shape[axn.index("z")]
+        sel[axn.index("z")] = max(0, min(nz - 1, int(spec["plane"])))
+    if "c" in axn and spec.get("channel") is not None:
+        sel[axn.index("c")] = int(spec["channel"])
+    arr = np.asarray(a[tuple(sel)])
+    if arr.ndim == 2:
+        arr = arr[None]
+    nc, H, W = arr.shape
+    if arr.dtype != np.uint8:                                # 16-bit fluorescence: stretched as app does
+        u8 = np.empty(arr.shape, np.uint8)
+        for c in range(nc):
+            s8 = arr[c, ::8, ::8]
+            lo_v, hi_v = float(np.percentile(s8, 1.0)), float(np.percentile(s8, 99.8))
+            g8 = 255.0 / max(hi_v - lo_v, 1e-6)
+            for r in range(0, H, 4096):
+                u8[c, r:r + 4096] = np.clip((arr[c, r:r + 4096].astype(np.float32) - lo_v) * g8,
+                                            0, 255).astype(np.uint8)
+        arr = u8
+    bg = spec.get("background_key") or ("white" if nc == 3 else "dark")
+    out = np.moveaxis(arr, 0, -1)                            # (H, W, nc)
+    if L[0, 0] < 0:
+        out = out[:, ::-1]
+    if L[1, 1] < 0:
+        out = out[::-1]
+    out = np.ascontiguousarray(out)
+    corners = np.array([[x, y, 0, 1] for x in (0, W) for y in (0, H)], float)
+    pts = (S @ corners.T).T[:, :2]
+    x0, y0 = pts.min(0)
+    if nc == 1:
+        out = out[..., 0]
+    OH, OW = out.shape[:2]
+    n_tiles = (-(-OH // tile)) * (-(-OW // tile))
+    total = n_tiles + 2
+    if progress:
+        progress(1, total)
+    T, tiles, nbytes, i = int(tile), [], 0, 1
+    for ty in range(0, OH, T):
+        for tx in range(0, OW, T):
+            blk = out[ty:ty + T, tx:tx + T]
+            fn = f"{key}_t{ty // T}_{tx // T}.jpg"
+            Image.fromarray(blk).save(app.CACHE / fn, quality=90)
+            tiles.append(dict(x0=tx, y0=ty, w=int(blk.shape[1]), h=int(blk.shape[0]), empty=False,
+                              file=f"cache/{fn}", bytes=(app.CACHE / fn).stat().st_size))
+            nbytes += tiles[-1]["bytes"]
+            i += 1
+            if progress:
+                progress(i, total)
+    f = int(ov_factor)
+    ow, oh = -(-OW // f), -(-OH // f)
+    ofn = f"{key}_ov.jpg"
+    Image.fromarray(out).resize((ow, oh), Image.BOX).save(app.CACHE / ofn, quality=88)
+    meta = dict(kind="rgb", tiled=True, bg_key=bg, name=spec["element"], dims=dict(x=OW, y=OH, z=1),
+                voxel_um=[um, um, float(spec.get("z_um", 1.0))],
+                origin_um=[float(x0), float(y0), float(spec.get("z0_um", 0.0))],
+                tile=T, tiles=tiles, overview=dict(file=f"cache/{ofn}", factor=f, w=ow, h=oh),
+                bytes=nbytes + (app.CACHE / ofn).stat().st_size)
+    cached.write_text(json.dumps(meta))
+    if progress:
+        progress(total, total)
+    return meta
+
+
+app.rgb_tiles_for = rgb_tiles_for
+
+
 ARRAY_FRAMES = {}
 
 
@@ -883,37 +985,61 @@ def array_frame(g, store):
     return out
 
 
-def gene_grid(spec, gene):
-    """app.gene_grid, its cached image keyed also by the µm per unit it was placed with: a store whose scale
-    the app now reads (bins_um_per_unit) must not be drawn from the grid cut when it was taken for µm."""
+GRID_SETUP = {}
+
+
+def _grid_setup(spec):
+    """What every gene's image of one store shares, worked out once: the lattice (app._grid_lattice reads the
+    whole cell-type map for it), and the lattice bin each signal sample falls in (-1 outside).  Per gene it
+    was 0.2 s of the 0.2 s a gene took; what is left per gene is its own column."""
+    import json as _json
+    k = _json.dumps({a: spec.get(a) for a in ("store", "element", "um_per_unit", "z_trim")}, sort_keys=True)
+    st = GRID_SETUP.get(k)
+    if st is not None:
+        return st
     g = app._open(str(spec["store"]))
     t = app._vector_table(g)
     if t is None:
         raise KeyError("this dataset has no binned expression")
     names = [str(x) for x in np.asarray(g[f"tables/{t}/var"]["gene"][:]).tolist()]
-    if gene not in names:
-        raise KeyError(gene)
     lat = app._grid_lattice(spec)
-    key = app._key(t="ggrid", p=str(spec["store"]), n=spec["element"], g=gene, mt=app._mtime(spec),
-                   m=app.GRID_MAX, u=spec.get("um_per_unit"), v="array1")
-    cached = app.CACHE / f"{key}.bin.gz"
-    if cached.exists():
-        return f"cache/{cached.name}", lat
-    col = np.asarray(g[f"tables/{t}/X"][:, names.index(gene)], np.float32)
     xy = np.asarray(g[f"tables/{t}/obsm/spatial"][:], np.float64)
     T = array_frame(g, spec["store"])
     if T is not None:                            # Visium HD: the bin array's µm -> global -> µm
         upu = app._um_per_unit(g, spec)
-        xs = (xy @ T[:, :2].T + T[:, 2]) * upu
-        xs, ys = xs[:, 0], xs[:, 1]
+        p = (xy @ T[:, :2].T + T[:, 2]) * upu
+        xs, ys = p[:, 0], p[:, 1]
     else:                                        # app's own reading: µm or global units, whichever fits
-        k = app._sample_scale(g, spec, xy, lat)
-        xs, ys = xy[:, 0] * k, xy[:, 1] * k
+        k2 = app._sample_scale(g, spec, xy, lat)
+        xs, ys = xy[:, 0] * k2, xy[:, 1] * k2
     ix = np.floor((xs - lat["ox"]) / lat["vx"]).astype(np.int64)
     iy = np.floor((ys - lat["oy"]) / lat["vy"]).astype(np.int64)
-    ok = (ix >= 0) & (iy >= 0) & (ix < lat["w"]) & (iy < lat["h"]) & (col > 0)
+    inside = (ix >= 0) & (iy >= 0) & (ix < lat["w"]) & (iy < lat["h"])
+    bins = np.where(inside, iy * lat["w"] + ix, -1)
+    st = dict(names=names, index={n: i for i, n in enumerate(names)}, table=t, lat=lat, bins=bins,
+              mt=app._mtime(spec))
+    GRID_SETUP[k] = st
+    return st
+
+
+def gene_grid(spec, gene):
+    """app.gene_grid: one gene's signal as a uint8 image on the cell-type map's lattice, the strongest sample
+    in each bin, scaled to its 99.5th percentile -- the same image, with the store's shared work done once
+    (_grid_setup), and its cached file keyed also by the µm per unit it was placed with."""
+    st = _grid_setup(spec)
+    if gene not in st["index"]:
+        raise KeyError(gene)
+    lat = st["lat"]
+    key = app._key(t="ggrid", p=str(spec["store"]), n=spec["element"], g=gene, mt=st["mt"],
+                   m=app.GRID_MAX, u=spec.get("um_per_unit"), v="array1")
+    cached = app.CACHE / f"{key}.bin.gz"
+    if cached.exists():
+        return f"cache/{cached.name}", lat
+    g = app._open(str(spec["store"]))
+    col = np.asarray(g[f"tables/{st['table']}/X"][:, st["index"][gene]], np.float32)
+    ok = (st["bins"] >= 0) & (col > 0)
     grid = np.zeros(lat["h"] * lat["w"], np.float32)
-    np.maximum.at(grid, iy[ok] * lat["w"] + ix[ok], col[ok])
+    np.maximum.at(grid, st["bins"][ok], col[ok])
     hi = float(np.percentile(grid[grid > 0], 99.5)) if (grid > 0).any() else 1.0
     out = np.clip(grid * (255.0 / max(hi, 1e-9)), 0, 255).astype(np.uint8)
     import gzip

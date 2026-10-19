@@ -2133,7 +2133,14 @@ async function setGene(nm,on){
                       : `${nm}: ${g.total.toLocaleString()} transcripts${g.count<g.total?`, a random ${g.count.toLocaleString()} drawn`:""}`); }
   else if(!GS.on.includes(nm)) GS.on.push(nm);
   renderGenes(); requestDraw(); }
+// While a Select all loads genes (a few a second), the list is redrawn at most twice a second rather than
+// after every gene: a redraw of up to 1,500 rows each time kept the page too busy to answer the search box.
+// Anything else (a click, a search, the end of the batch) redraws at once.
+let geneRenderTimer=0;
 function renderGenes(){
+  if(!GS.running){ clearTimeout(geneRenderTimer); geneRenderTimer=0; renderGenesNow(); return; }
+  if(!geneRenderTimer) geneRenderTimer=setTimeout(()=>{ geneRenderTimer=0; renderGenesNow(); },500); }
+function renderGenesNow(){
   const q=GS.filter.trim().toLowerCase(), match=GS.list.filter((r)=>!q||r[0].toLowerCase().includes(q));
   // the genes being drawn are listed first, and stay listed while a search is typed: a gene that is
   // on should never have to be found again by scrolling.  Everything else — the counts, the two
@@ -2144,7 +2151,7 @@ function renderGenes(){
   const box=$("#geneList"); box.innerHTML="";
   const frag=document.createDocumentFragment();
   for(const [nm,n] of rows.slice(0,1500)){
-    const on=GS.on.includes(nm), g=GS.data.get(nm);
+    const on=chosen.has(nm), g=GS.data.get(nm);
     const row=document.createElement("label");
     row.className="gene"+(on?" on":"")+(!on&&pinned.length&&frag.childElementCount===pinned.length?" sep":"");
     row.innerHTML=`<input type="checkbox" ${on?"checked":""}><span class="sw" style="background:${g?.color||"transparent"}" title="Click for another colour"></span><span>${esc(nm)}${GS.hvg&&!GS.grid&&GS.hvg.has(nm)?' <span class="pct">HVG</span>':""}</span><span class="pct">${n?n.toLocaleString():""}</span>`;
@@ -2155,12 +2162,19 @@ function renderGenes(){
   box.appendChild(frag);
   $("#geneCount").textContent=`${GS.on.length} of ${GS.list.length} genes shown${q?` · ${match.length} match`:""}`;
   // while a Select all is still loading, the button stops it (and switches the genes off) at once
-  const allOn=GS.running||(match.length&&match.every((r)=>GS.on.includes(r[0])));
+  const allOn=GS.running||(match.length&&match.every((r)=>chosen.has(r[0])));
   $("#geneAll").textContent=allOn?"Deselect all":(q?"Select all matches":"Select all");
   $("#geneAll").onclick=async()=>{
     if(allOn){ stopGeneBatch(); const drop=new Set(match.map((r)=>r[0])); GS.on=GS.on.filter((x)=>!drop.has(x));
       for(const x of drop) cancelGene(x); renderGenes(); requestDraw(); setStatus(`${GS.on.length} genes shown`); return; }
-    const b=++GS.batch, todo=match.map((r)=>r[0]).filter((x)=>!GS.on.includes(x)); GS.running=true; renderGenes();
+    const todo=match.map((r)=>r[0]).filter((x)=>!chosen.has(x));
+    // genes drawn as images over the whole map (the array platforms) cost the GPU a full image each: many at
+    // once is asked about first (the desktop app's own dialog; a plain confirm in a browser)
+    if(GS.grid&&todo.length>50){
+      const msg="Turning on many genes at once can slow down the app.";
+      const go=window.ssaft&&window.ssaft.confirm?await window.ssaft.confirm(msg):window.confirm(msg);
+      if(!go) return; }
+    const b=++GS.batch; GS.running=true; renderGenesNow();
     for(let k=0;k<todo.length&&b===GS.batch;k+=4) await Promise.all(todo.slice(k,k+4).map((x)=>setGene(x,true).catch((e)=>setStatus(e.message,true))));
     if(b===GS.batch){ GS.running=false; renderGenes(); setStatus(`${GS.on.length} genes shown`); } };
   // HVG only: exactly the highly variable genes (of the search matches) on, every other gene off
@@ -2218,7 +2232,7 @@ function drawGenes2D(V,upc,W,H){
   gl.uniform1f(u.uZlo,lo); gl.uniform1f(u.uZhi,hi); geneUniforms(u);
   for(const nm of GS.on){ const d=GS.data.get(nm); if(!d) continue;
     gl.uniform3fv(u.uColor,hexRGB(d.color)); gl.bindVertexArray(d.vao); gl.drawArrays(gl.POINTS,0,d.count); } }
-$("#geneFind").addEventListener("input",(e)=>{ GS.filter=e.target.value; renderGenes(); });
+$("#geneFind").addEventListener("input",(e)=>{ GS.filter=e.target.value; renderGenesNow(); });
 { const sz=$("#geneSize"), al=$("#geneAlpha"), gn=$("#geneGain");
   const upd=()=>{ GS.size=+sz.value; GS.alpha=+al.value/100; GS.gain=+gn.value;
     $("#geneSizeV").textContent=sz.value+" px"; $("#geneGainV").textContent=gn.value+"x";

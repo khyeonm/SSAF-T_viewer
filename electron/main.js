@@ -218,6 +218,13 @@ const storeArgs = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a 
 
 ipcMain.handle('open-dialog', () => pick());
 ipcMain.handle('version', () => app.getVersion());
+// a question the page asks before something heavy: true for Continue
+ipcMain.handle('confirm', async (_e, message) => {
+	const r = await dialog.showMessageBox(win, {
+		type: 'warning', message: String(message), buttons: ['Cancel', 'Continue'], defaultId: 1, cancelId: 0
+	});
+	return r.response === 1;
+});
 ipcMain.on('opened', (_e, p) => { if (typeof p === 'string') app.addRecentDocument(p); });
 ipcMain.on('clear-cache', () => clearCache());
 ipcMain.on('show-log', () => shell.showItemInFolder(path.join(dirs().logs, 'server.log')));

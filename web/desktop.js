@@ -28,7 +28,9 @@
 		const r = await fetch('/api/datasets');
 		return r.ok ? (await r.json()).datasets[0] || null : null;
 	}
+	let shownDs = null;                       // the store on screen: which layer keys make up each Show box
 	async function show(d) {
+		shownDs = d;
 		$('#dsSelect').innerHTML = `<option value="${esc(d.id)}">${esc(d.title)}</option>`;
 		document.title = `${d.title} — SSAF-T Viewer`;
 		const run = stage.start();
@@ -139,6 +141,14 @@
 		if (stage.genes) body.classList.add('st-genes');
 		const busy = !stage.base || !stage.genes || pending.size > 0 || S.layers.some((L) => L.solidWait);
 		spin.hidden = !busy;
+		// a Show box whose layer is still being fetched or prepared turns too: with the log line hidden it is
+		// the one sign that a ticked layer is on its way rather than missing
+		if (S.showBoxes && shownDs) {
+			const group = (k) => (shownDs.layers.find((l) => l.key === k) || {}).group || k;
+			const working = new Set([...pending.keys()].map(group));
+			for (const L of S.layers) if (L.solidWait && L.mode === 'solid') working.add(L.group || L.meta.key);
+			for (const [g, cb] of S.showBoxes) cb.parentElement.classList.toggle('desk-busy', working.has(g));
+		}
 		if (!busy) body.classList.remove('desk-staging');
 	}, 300);
 
