@@ -41,6 +41,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 # a big numpy allocation can stall for minutes while the kernel compacts huge pages (viewer/run.sh)
 os.environ.setdefault("NUMPY_MADVISE_HUGEPAGE", "0")
+# pyarrow's own allocator (jemalloc / mimalloc) crashed the PyInstaller build with a segfault when parquet was
+# read in one thread while another decoded zarr (a store's cell outlines being indexed as the next store's image
+# was cut: every time, and never from source).  The system allocator does not; it must be set before pyarrow loads.
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
 
 import numpy as np  # noqa: E402
 
@@ -1243,6 +1247,10 @@ def _watch_stdin():
 
 def main():
     global WEB
+    # a crash in native code (a segfault) otherwise ends the server with nothing in its log: this writes
+    # every thread's Python stack to stderr, which the app keeps in logs/server.log
+    import faulthandler
+    faulthandler.enable(all_threads=True)
     for s in (sys.stdout, sys.stderr):                           # Windows consoles are not UTF-8
         try:
             s.reconfigure(encoding="utf-8", errors="replace")

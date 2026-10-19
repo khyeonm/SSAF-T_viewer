@@ -45,11 +45,16 @@
 		if (d) await show(d); else { clearDataset(); hello(); empty(true); document.title = 'SSAF-T Viewer'; }
 	};
 
+	let opening = 0;                          // stores being read: the title's ring turns from the click on
 	async function open(path) {
 		if (!path) return;
 		setStatus(`reading ${name(path)} …`);
-		const r = await fetch('/api/open?path=' + encodeURIComponent(path));
-		const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+		opening++;
+		let r, j;
+		try {
+			r = await fetch('/api/open?path=' + encodeURIComponent(path));
+			j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+		} finally { opening--; }
 		if (!r.ok) throw new Error(`${name(path)}: ${j.error || r.status}`);
 		if (app) app.opened(path);
 		await show(await current());
@@ -136,7 +141,7 @@
 	const spin = $('#deskSpin');
 	setInterval(() => {
 		const S = window.__viewer, body = document.body;
-		if (body.classList.contains('desk-empty')) { spin.hidden = true; return; }
+		if (body.classList.contains('desk-empty')) { spin.hidden = !opening; return; }
 		if (S.layers.length) body.classList.add('st-layers');
 		if (stage.genes) body.classList.add('st-genes');
 		const busy = !stage.base || !stage.genes || pending.size > 0 || S.layers.some((L) => L.solidWait);
