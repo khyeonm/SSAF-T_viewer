@@ -1609,11 +1609,15 @@ function inRing(x,y,r){ let inside=false;
     if(((yi>y)!==(yj>y)) && x<(xj-xi)*(y-yi)/(yj-yi)+xi) inside=!inside; }
   return inside; }
 function knownCell(h){                       // a cell already answered whose outline holds the cursor
+  // in 3D an outline is one plane of the cell: it holds the cursor within a plane's step of its z (the server's
+  // own test), and of several, the nearest plane's
+  let best=null, bestDz=Infinity;
   for(const c of cellLoc.cells){
     if(c.ds!==h.L.ds||c.view!==h.view||!inRing(h.p[0],h.p[1],c.ring)) continue;
-    if(c.z!=null&&h.p[2]!=null&&Math.abs(h.p[2]-c.z)>c.step/2+1e-6) continue;
-    return c; }
-  return null; }
+    const dz=(c.z!=null&&h.p[2]!=null)?Math.abs(h.p[2]-c.z):0;
+    if(dz>c.step+1e-6) continue;
+    if(dz<bestDz){ best=c; bestDz=dz; } }
+  return best; }
 function missKey(h){ return `${h.L.ds}|${h.view}|${Math.round(h.p[0])}|${Math.round(h.p[1])}|${h.p[2]==null?"":Math.round(h.p[2])}`; }
 function askLocation(h){
   clearTimeout(cellLoc.timer);
@@ -1628,7 +1632,9 @@ function askLocation(h){
         cellLoc.cells.length=Math.min(cellLoc.cells.length,200); }
       else cellLoc.miss.set(missKey(h),c?c.location:null);
       if(hoverHit&&isCellLayer(hoverHit.L)){                  // the cursor may have moved on meanwhile
-        const k=knownCell(hoverHit); cellLoc.shown=k?k.loc:(cellLoc.miss.get(missKey(hoverHit))||null); renderHover(); } }
+        const k=knownCell(hoverHit), here=missKey(hoverHit)===missKey(h);
+        // the answer for the very point under the cursor is shown as it came, whatever the outline test says
+        cellLoc.shown=k?k.loc:(here&&c?c.location:(cellLoc.miss.get(missKey(hoverHit))||null)); renderHover(); } }
     catch(e){ if(e.name!=="AbortError") cellLoc.miss.set(missKey(h),null); } },40); }
 let hoverHit=null;
 function renderHover(){
