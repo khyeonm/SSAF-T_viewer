@@ -217,6 +217,7 @@ const storeArgs = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a 
 	/\.zarr[\\/]?$/i.test(a) && fs.existsSync(a));
 
 ipcMain.handle('open-dialog', () => pick());
+ipcMain.handle('version', () => app.getVersion());
 ipcMain.on('opened', (_e, p) => { if (typeof p === 'string') app.addRecentDocument(p); });
 ipcMain.on('clear-cache', () => clearCache());
 ipcMain.on('show-log', () => shell.showItemInFolder(path.join(dirs().logs, 'server.log')));

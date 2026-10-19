@@ -64,6 +64,13 @@
 	brand.append($('#sub'));
 	$('#panel .head').prepend(brand);
 
+	/* ---------------------------------------------------------------- the version, at the panel's foot */
+	if (app) {
+		const foot = Object.assign(document.createElement('div'), { className: 'desk-foot' });
+		$('#panel').append(foot);
+		app.version().then((v) => { foot.textContent = `v${v}`; });
+	}
+
 	/* ---------------------------------------------------------------- the panel */
 	// the dataset section: its heading, the list and the facts go; Show and the layers stay
 	for (const n of [$('#catalogSection h2'), $('#dsSelect'), $('#dsInfo')]) n.hidden = true;

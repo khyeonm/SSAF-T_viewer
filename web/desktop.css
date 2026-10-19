@@ -34,3 +34,8 @@ body.desk-staging:not(.st-genes) #geneSection { display: none !important; }
 	border: 2px solid var(--line); border-top-color: var(--accent); animation: desk-spin .8s linear infinite; }
 #deskSpin[hidden] { display: none; }
 @keyframes desk-spin { to { transform: rotate(360deg); } }
+
+/* the app's version, a footer under the panel's scrolling body (the body takes the height left, so the footer stays) */
+#panel > .body { flex: 1 1 auto; min-height: 0; }
+.desk-foot { flex: none; padding: 4px 12px 6px; text-align: right; font-size: 10.5px; color: var(--muted); opacity: .7;
+	border-top: 1px solid var(--line); }

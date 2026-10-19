@@ -6,6 +6,8 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('ssaft', {
+	/** the app's version (package.json), for the panel's footer */
+	version: () => ipcRenderer.invoke('version'),
 	/** a folder dialog for the .zarr store; resolves to the chosen path, or null */
 	openDialog: () => ipcRenderer.invoke('open-dialog'),
 	/** the path on disk of a File dropped on the page */
