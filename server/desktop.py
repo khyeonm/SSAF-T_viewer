@@ -51,6 +51,7 @@ import numpy as np  # noqa: E402
 import app  # noqa: E402
 
 FROZEN = getattr(sys, "frozen", False)
+TMP = Path.home() / ".cache" / "ssaft-viewer" / "tmp"     # file-backed large arrays (_big); set in main
 WEB = Path(__file__).resolve().parent.parent / "web"
 IMAGE_BUDGET = 300e6    # source pixels of an image level the viewer resamples at once (see image_level)
 
@@ -232,6 +233,7 @@ def manifest_for(store):
             nc = a.shape[ax.index("c")]
             if not (nc == 3 and str(a.dtype) == "uint8"):
                 spec["channel"] = 0                  # a fluorescence scan: its first channel (DAPI)
+        spec["_mono"] = not rgb                      # a grey picture: one channel on the GPU (see rgb_tiles_for)
         if "z" in ax:
             spec["plane"] = a.shape[ax.index("z")] // 2
         layers["nuclei" if i == 0 else f"image_{name}"] = spec
@@ -297,6 +299,48 @@ def find_store(p):
 
 
 OPEN_LOCK = threading.Lock()
+CACHE_ROOT = None       # <app data>/cache: a folder per store under it (open_store), see prune_cache
+CACHE_LIMIT = float(os.environ.get("SSAFT_CACHE_LIMIT_GB", "20")) * 1e9
+OPENED = ".opened"      # the marker in a store's folder: its time is when the store was last opened
+
+
+def _size(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def prune_cache(keep):
+    """Keep the cache under CACHE_LIMIT: whole store folders go, the least recently opened first, never the
+    one open now.  A store's prepared data is all in its own folder, so a folder goes or stays as a unit and
+    no layer is ever left with half of its files.  What an older version kept loose in the cache's root
+    (one folder for every store) is removed outright: nothing reads it any more."""
+    try:
+        for e in os.scandir(CACHE_ROOT):
+            if e.is_file():
+                try:
+                    os.unlink(e.path)
+                except OSError:
+                    pass
+        stores = []
+        for e in os.scandir(CACHE_ROOT):
+            if e.is_dir() and e.name != keep and os.path.exists(os.path.join(e.path, OPENED)):
+                stores.append((os.path.getmtime(os.path.join(e.path, OPENED)), e.path))
+        total = _size(CACHE_ROOT)
+        for _, path in sorted(stores):
+            if total <= CACHE_LIMIT:
+                break
+            freed = _size(path)
+            shutil.rmtree(path, ignore_errors=True)
+            total -= freed
+            print(f"cache: removed {Path(path).name} ({freed / 1e9:.1f} GB), the least recently opened store", flush=True)
+    except Exception:                                            # noqa: BLE001
+        traceback.print_exc()
 
 
 def open_store(path):
@@ -320,6 +364,11 @@ def open_store(path):
             for k in [k for k in reg if k[0] != did]:
                 reg.pop(k)
         d["id"] = did
+        if CACHE_ROOT is not None:                   # this store's prepared data, in a folder of its own
+            app.CACHE = CACHE_ROOT / did
+            app.CACHE.mkdir(parents=True, exist_ok=True)
+            (app.CACHE / OPENED).write_text(time.strftime("%Y-%m-%d %H:%M:%S"))
+            threading.Thread(target=prune_cache, args=(did,), daemon=True, name="prune").start()
         for k, spec in d["layers"].items():
             if spec["type"] == "sdata_image":
                 spec["_rgb"] = app.sdata_is_rgb(spec)
@@ -512,7 +561,7 @@ def _big(shape, dtype):
     nbytes = int(np.prod(shape)) * np.dtype(dtype).itemsize
     if nbytes <= BIG:
         return np.zeros(shape, dtype)
-    tmp = app.CACHE.parent / "tmp"
+    tmp = TMP
     tmp.mkdir(parents=True, exist_ok=True)
     fh = tempfile.NamedTemporaryFile(dir=tmp, suffix=".npy", delete=False)
     fh.close()
@@ -712,7 +761,8 @@ def instance_volume(spec):
 
 
 def _write_solid_tiles(key, chans, occupied, src, sigma_xy_um, sigma_z_um, classes, tile, ov_factor):
-    """app._write_solid_tiles, plane by plane and tile by tile; the same files.
+    """app._write_solid_tiles, plane by plane and tile by tile; the same files, less the tissue envelope
+    (a strongly smoothed shell of the whole section, which the app does not offer).
 
     The original holds a boolean of the whole volume for the empty-tile test, two padded copies of it for
     the overview and a float32 copy for the tissue envelope (12 GB for a 3 GB map)."""
@@ -756,24 +806,10 @@ def _write_solid_tiles(key, chans, occupied, src, sigma_xy_um, sigma_z_um, class
     with gzip.open(CACHE / ofn, "wb", compresslevel=6) as fh:
         fh.write(np.ascontiguousarray(np.stack(ov, -1)).tobytes())
     del ov
-    # the tissue envelope stays a coarse, strongly smoothed shell (4 µm blocks, sigma 8 µm)
-    tf = 4
-    ty_, tx_ = -(-Y // tf), -(-X // tf)
-    means = np.empty((Z, ty_, tx_), np.float32)
-    for z in range(Z):
-        tb = np.zeros((ty_ * tf, tx_ * tf), np.float32)
-        tb[:Y, :X] = occupied[z]
-        means[z] = tb.reshape(ty_, tf, tx_, tf).mean(axis=(1, 3))
-    tocc = gaussian_filter(means, (1.125 / vz if Z > 1 else 0.0, 8.0 / (vy * tf), 8.0 / (vx * tf)))
-    tfn = f"{key}_stissue.bin.gz"
-    with gzip.open(CACHE / tfn, "wb", compresslevel=6) as fh:
-        fh.write(np.ascontiguousarray(np.clip(tocc * 255.0, 0, 255).astype(np.uint8)).tobytes())
     return dict(kind="solidtiles", channels=len(chans), name=src["name"], dims=dict(x=X, y=Y, z=Z),
                 voxel_um=list(src["voxel_um"]), origin_um=list(src["origin_um"]), tile=T, tiles=tiles,
                 classes=classes, overview=dict(file=f"cache/{ofn}", factor=f, w=bx, h=by),
                 sigma_um=[float(sigma_xy_um), float(sigma_xy_um), float(sigma_z_um)], iso=0.5,
-                tissue=dict(file=f"cache/{tfn}", dims=dict(x=tx_, y=ty_, z=Z), voxel_um=[vx * tf, vy * tf, vz],
-                            origin_um=list(src["origin_um"]), bytes=(CACHE / tfn).stat().st_size),
                 bytes=nbytes + (CACHE / ofn).stat().st_size)
 
 
@@ -846,10 +882,57 @@ def _obs_column(g, table, column, key=None):
 app._obs_column = _obs_column
 
 
+def _obs_palette(spec):
+    """(names, colours) from a table that carries no SSAF-T palette: the categories of the column the layer
+    is coloured by, with the `<column>_colors` AnnData keeps beside it in `uns` (as SSAF-T_web's viewer
+    reads them).  A vendor's table, or one from another analysis, names its cells that way."""
+    import zarr
+    name = spec.get("palette_table") or spec.get("table")
+    col = spec.get("color_key", "cellman_annotation")
+    if not name:
+        return None, None
+    g = app._open(str(spec["store"]))
+    if "tables" not in g or name not in g["tables"]:
+        return None, None
+    tb = g["tables"][name]
+    if col not in tb["obs"]:
+        return None, None
+    node = tb["obs"][col]
+    if not isinstance(node, zarr.Group) or "categories" not in node:
+        return None, None                                    # a plain string column has no categories
+    names = [str(x) for x in np.asarray(node["categories"][:])]
+    uns = tb.get("uns")
+    colors = None
+    if uns is not None and f"{col}_colors" in set(uns.array_keys()):
+        colors = [str(x) for x in np.asarray(uns[f"{col}_colors"][:])]
+    return names, (colors[:len(names)] if colors and len(colors) >= len(names) else None)
+
+
+_palette_app = app._palette
+
+
+def _palette(spec):
+    """app._palette, falling back to the table's own categorical column when it has no SSAF-T palette."""
+    names, colors = _palette_app(spec)
+    if names or spec.get("palette_store"):
+        return names, colors
+    return _obs_palette(spec)
+
+
+app._palette = _palette
+
+
 _rgb_tiles_for = app.rgb_tiles_for
 
 
 def rgb_tiles_for(spec, tile=2048, ov_factor=8, progress=None):
+    """The picture's tiles, and whether they are grey: a grey picture (a fluorescence channel, its tiles grey
+    JPEGs) is uploaded by the page as one byte a pixel instead of four, so it takes a quarter of the GPU
+    memory and more of it stays at full resolution.  Like `color`, a display choice: never in the cache."""
+    return dict(_rgb_tiles(spec, tile=tile, ov_factor=ov_factor, progress=progress), mono=bool(spec.get("_mono")))
+
+
+def _rgb_tiles(spec, tile=2048, ov_factor=8, progress=None):
     """app.rgb_tiles_for, without the resampling when there is nothing to resample.
 
     app resamples every picture onto the µm lattice through its transform (bilinear, through the inverse of
@@ -1246,7 +1329,7 @@ def _watch_stdin():
 
 
 def main():
-    global WEB
+    global WEB, CACHE_ROOT, TMP
     # a crash in native code (a segfault) otherwise ends the server with nothing in its log: this writes
     # every thread's Python stack to stderr, which the app keeps in logs/server.log
     import faulthandler
@@ -1281,8 +1364,8 @@ def main():
 
     cache = Path(a.cache or (Path.home() / ".cache" / "ssaft-viewer" / "cache")).expanduser().resolve()
     cache.mkdir(parents=True, exist_ok=True)
-    app.CACHE = cache
-    shutil.rmtree(cache.parent / "tmp", ignore_errors=True)
+    app.CACHE = cache                            # the gene index child is handed its store's folder itself
+    TMP = cache.parent / "tmp"
     if a.web:
         WEB = Path(a.web).resolve()
     elif FROZEN:                                                 # PyInstaller: data beside the code
@@ -1291,6 +1374,8 @@ def main():
     if a.build_genes:                                            # the child of _genes_subprocess
         app.gene_index_for(*a.build_genes, progress=lambda i, n: print(f"progress {i} {n}", flush=True))
         raise SystemExit(0)
+    CACHE_ROOT = cache
+    shutil.rmtree(TMP, ignore_errors=True)       # a previous run's file-backed arrays (Windows keeps them)
     if a.token_file:
         app.TOKEN = Path(a.token_file).read_text().strip()
         if len(app.TOKEN) < 24:

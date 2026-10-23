@@ -303,7 +303,14 @@ function withoutWebGL(){
 }
 const GPU_OOM="The browser ran out of GPU memory, so part of the view could not be drawn. Switch some layers off (each one gives its memory back) or reload the page.";
 canvas.addEventListener("webglcontextlost",(e)=>{ e.preventDefault(); setStatus(GPU_OOM,true); });
-function gpuCheck(){ if(gl.getError()===gl.OUT_OF_MEMORY) setStatus(GPU_OOM,true); }
+// true when the upload went through.  A driver that would not take a texture decides the real limit for
+// this machine: the budget comes down to what it HAS taken, the refused tile goes back to the overview,
+// and the view goes on rather than asking again until the context is lost (SSAF-T_web's viewer does the
+// same).  A tile refused twice stays at the overview, so a driver that refuses everything cannot loop.
+function gpuCheck(){
+  if(gl.getError()!==gl.OUT_OF_MEMORY) return true;
+  GPU_BUDGET=Math.max(600e6,tilesInUse()); setStatus(GPU_OOM,true); return false; }
+function gpuRefused(T){ freeTile(T); if((T.oom=(T.oom||0)+1)>=2) T.state="error"; }
 
 // ---------------------------------------------------------------- math
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
@@ -580,10 +587,13 @@ void main(){
 const FS_IMG = `#version 300 es
 precision highp float; precision highp sampler2D;
 uniform sampler2D uImg; uniform vec3 uBoxMin,uBoxMax; uniform vec4 uUV; uniform float uAlpha; uniform int uKey;
+// a grey picture (a fluorescence channel) is held as ONE channel: a quarter of the GPU memory of four
+uniform int uMono;
 in vec3 vWorld; out vec4 outColor;
 void main(){
   vec2 t=vec2((vWorld.x-uBoxMin.x)/(uBoxMax.x-uBoxMin.x), (uBoxMax.y-vWorld.y)/(uBoxMax.y-uBoxMin.y));
-  vec3 c=texture(uImg,mix(uUV.xy,uUV.zw,t)).rgb;
+  vec4 s=texture(uImg,mix(uUV.xy,uUV.zw,t));
+  vec3 c=uMono==1?vec3(s.r):s.rgb;
   float a=uAlpha;
   // slide background is light and grey (min channel ~0.85-0.93, saturation ~0.01); stain is saturated
   // (> 0.12) or dark, so either one keeps a pixel.  Fluorescence is the reverse: bright on black.
@@ -648,11 +658,12 @@ void main(){
 }`;
 const FS2_RGB = `#version 300 es
 precision highp float; precision highp sampler2D;
-uniform sampler2D uImg; uniform vec2 uOrg,uVox; uniform float uAlpha; uniform int uKey;
+uniform sampler2D uImg; uniform vec2 uOrg,uVox; uniform float uAlpha; uniform int uKey; uniform int uMono;
 in vec2 vUm; out vec4 outColor;
 void main(){
   vec2 p=(vUm-uOrg)/uVox, sz=vec2(textureSize(uImg,0));
-  vec3 c=texture(uImg,p/sz).rgb;
+  vec4 s=texture(uImg,p/sz);
+  vec3 c=uMono==1?vec3(s.r):s.rgb;
   if(p.x<0.0||p.y<0.0||p.x>=sz.x||p.y>=sz.y) discard;
   float a=uAlpha;
   // slide background is light and grey (min channel ~0.85-0.93, saturation ~0.01); stain is saturated
@@ -848,7 +859,7 @@ const quadVAO=gl.createVertexArray();
 // ---------------------------------------------------------------- state
 const S = {
   layers: [], zScale: 1, light:false, fov: 40*Math.PI/180,
-  cam:{target:[0,0,0],dist:1000,az:0,el:1.0}, vel:{az:0,el:0}, quality:1,
+  cam:{target:[0,0,0],dist:1000,az:0,el:Math.PI/2-0.002}, vel:{az:0,el:0}, quality:1,   // from above
   orbitCursor:false, cursor:[0,0],   // off by default: a drag turns the view where it is dir:"", store:null, bytes:0,
   hiddenNames:new Set(),                         // cell types switched off, by name, for the whole dataset
   mode2d:false, v2:{cx:0,cy:0,upp:1}, z2d:null, zPicked:false,  // 2D slice: centre (µm), µm per CSS pixel, z (µm)
@@ -878,14 +889,17 @@ function texU8(data,w,h,d,filter){
   S.bytes+=w*h*d; return t; }
 async function fetchImg(url){ const r=await fetch(url); if(!r.ok) throw new Error(url+": "+r.status);
   return await createImageBitmap(await r.blob(),{imageOrientation:"none",premultiplyAlpha:"none",colorSpaceConversion:"none"}); }
-function texImg(bm){
+// `mono`: a grey picture (the server marks a fluorescence channel so) goes up as one byte a pixel (R8) --
+// the browser takes the decoded image's red channel, which for a grey JPEG is the picture itself
+function texImg(bm,mono){
   const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,bm);
+  if(mono) gl.texImage2D(gl.TEXTURE_2D,0,gl.R8,gl.RED,gl.UNSIGNED_BYTE,bm);
+  else gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,gl.RGBA,gl.UNSIGNED_BYTE,bm);
   gl.generateMipmap(gl.TEXTURE_2D);
   for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR],[gl.TEXTURE_MAG_FILTER,gl.NEAREST],
     [gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D,k,v);
-  S.bytes+=Math.round(bm.width*bm.height*4*1.33); return t; }
+  S.bytes+=Math.round(bm.width*bm.height*(mono?1:4)*1.33); return t; }
 // fill: by cell type (a cell without one is grey), or the outline colour, translucent; outline: as chosen
 function lineUniforms(u,L,fill){
   const byC=fill?L.fillByClass:L.byClass;
@@ -945,7 +959,7 @@ function tileProgress(L){
 // any layer is dropped to make room for a nearer one), and the rest is drawn from the overview; tiles
 // follow the view as it moves.  A layer that is switched off or not being drawn (voxels while its solid
 // view is on, and back) gives its tiles up at once.
-const GPU_BUDGET=2000e6;
+let GPU_BUDGET=2000e6;                          // lowered by gpuCheck when the GPU refuses an upload
 function tileSets(){ const o=[];
   for(const L of S.layers){ if(L.tiles&&L.tiles.length) o.push([L.meta,L.tiles]); if(L.stiles&&L.solid) o.push([L.solid,L.stiles]); }
   return o; }
@@ -974,7 +988,7 @@ function repumpAll(){ for(const L of S.layers) repump(L); }
 function pumpTiles(L){
   if(!S.layers.includes(L)||!L.visible||L.mode==="solid") return;
   const m=L.meta;
-  const need=(T)=>m.kind==="rgb"?Math.round(T.w*T.h*4*1.33):T.w*T.h*m.dims.z;
+  const need=(T)=>m.kind==="rgb"?Math.round(T.w*T.h*(m.mono?1:4)*1.33):T.w*T.h*m.dims.z;
   const queue=L.tiles.filter((t)=>t.state==="none").sort((a,b)=>tileDist(m,a)-tileDist(m,b));
   while(L.tilesBusy<2 && queue.length){
     if(!makeRoom(m,queue[0],need(queue[0]))){ budgetNote(); break; }
@@ -982,13 +996,15 @@ function pumpTiles(L){
     (m.kind==="rgb"
       ? fetchImg(T.file).then((bm)=>{
           if(!S.layers.includes(L)){ bm.close(); return; }
-          const b0=S.bytes; T.tex=texImg(bm); bm.close(); T.bytes=S.bytes-b0; T.state="ready"; gpuCheck(); })
+          const b0=S.bytes; T.tex=texImg(bm,m.mono); bm.close(); T.bytes=S.bytes-b0; T.state="ready";
+          if(!gpuCheck()) gpuRefused(T); })
       : fetchGz(T.file).then((data)=>{
           if(!S.layers.includes(L)) return;      // the dataset changed while this was loading
           const b0=S.bytes; T.tex=texU8(data,T.w,T.h,m.dims.z,false); T.occ=occTex(data,T.w,T.h,m.dims.z,16);
           if(m.kind==="labels") T.cpu=data;       // the hover reads the cell type under the cursor here
-          T.bytes=S.bytes-b0; T.state="ready"; gpuCheck();
-          if(!L.visible||L.mode==="solid") freeTile(T);   // switched off while it was on its way
+          T.bytes=S.bytes-b0; T.state="ready";
+          if(!gpuCheck()) gpuRefused(T);
+          else if(!L.visible||L.mode==="solid") freeTile(T);   // switched off while it was on its way
         })).catch((e)=>{ T.tries=(T.tries||0)+1; T.state=T.tries<3?"none":"error"; if(T.state==="error") setStatus("tile: "+e.message,true); })
       .finally(()=>{ L.tilesBusy--; tileProgress(L); requestDraw(); pumpTiles(L); });
   }
@@ -1045,7 +1061,7 @@ async function addLayer(meta){
     S.bytes+=xy.byteLength+cls.byteLength+idx.byteLength;
   } else if(meta.kind==="rgb"){                      // a colour image: JPEG tiles, overview first
     const o=meta.overview, bm=await fetchImg(o.file);
-    L.ov={ tex:texImg(bm), factor:o.factor, w:o.w, h:o.h }; bm.close();
+    L.ov={ tex:texImg(bm,L.meta.mono), factor:o.factor, w:o.w, h:o.h }; bm.close();
     L.keyWhite=true; L.keyMode=meta.bg_key==="dark"?2:1;   // hide the slide's white, or fluorescence's black
     L.tiles=meta.tiles.map((t)=>({...t, state:"none", tex:null}));
   } else if(tiled){
@@ -1206,7 +1222,8 @@ function draw(){
     const m=L.meta, v=m.voxel_um, o=m.origin_um, u=P_IMG.u, zt=(o[2]+m.dims.z*v[2])*zw;
     gl.useProgram(P_IMG.p); gl.bindVertexArray(quadVAO); gl.disable(gl.CULL_FACE);
     gl.uniformMatrix4fv(u.uViewProj,false,VP); gl.uniform1f(u.uAlpha,L.opacity);
-    gl.uniform1i(u.uKey,L.keyWhite?(L.keyMode||1):0); gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(u.uKey,L.keyWhite?(L.keyMode||1):0); gl.uniform1i(u.uMono,L.meta.mono?1:0);
+    gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
     for(const T of L.tiles){
       const full=T.state==="ready"; if(!full&&!L.ov) continue;
       gl.uniform3f(u.uBoxMin, o[0]+T.x0*v[0]-rebase[0], -(o[1]+(T.y0+T.h)*v[1])-rebase[1], zt);
@@ -1396,6 +1413,7 @@ function draw2D(){
   const vis=S.layers.filter((L)=>L.visible&&inView(L));
   for(const L of vis.filter((L)=>L.meta.kind==="rgb")){
     const u=use(P2_RGB); gl.uniform1f(u.uAlpha,L.opacity); gl.uniform1i(u.uKey,L.keyWhite?(L.keyMode||1):0);
+    gl.uniform1i(u.uMono,L.meta.mono?1:0);
     gl.uniform1i(u.uImg,0); gl.activeTexture(gl.TEXTURE0);
     tiles(L,u,(t)=>gl.bindTexture(gl.TEXTURE_2D,t)); }
   for(const L of vis.filter((L)=>L.meta.kind==="labels")){
@@ -1823,11 +1841,6 @@ function renderLayers(){
           const ii=iso.querySelector("input"), iv=iso.querySelector("span");
           const setIso=()=>{L.solidIso=+ii.value/100;iv.textContent=ii.value+"%";requestDraw(true);};
           ii.addEventListener("input",setIso); setIso(); el.appendChild(iso);
-          const env=document.createElement("label"); env.className="show";
-          env.innerHTML=`<input type="checkbox" ${L.envelope?"checked":""}> Tissue envelope (translucent)`;
-          const ec=env.querySelector("input");
-          ec.onchange=()=>{ L.envelope=ec.checked; syncSolid(L).catch((e)=>setStatus(e.message,true)); requestDraw(); };
-          el.appendChild(env);
           const note=document.createElement("div"); note.className="meta"; note.style.margin="2px 0 6px";
           note.textContent=L.solidNote||(L.solid&&L.solid.kind==="solidtiles"
             ? (L.solid.channels===3
@@ -1979,8 +1992,9 @@ function pumpSolidTiles(L){
     fetchGz(T.file).then((data)=>{
       if(!S.layers.includes(L)) return;
       const b0=S.bytes; T.tex=texU8RG(data,T.w,T.h,m.dims.z,m.channels); T.occ=occTexSolid(data,T.w,T.h,m.dims.z,16,m.channels);
-      T.bytes=S.bytes-b0; T.state="ready"; gpuCheck();
-      if(!L.visible||L.mode!=="solid") freeTile(T);
+      T.bytes=S.bytes-b0; T.state="ready";
+      if(!gpuCheck()) gpuRefused(T);
+      else if(!L.visible||L.mode!=="solid") freeTile(T);
     }).catch((e)=>{ T.tries=(T.tries||0)+1; T.state=T.tries<3?"none":"error"; if(T.state==="error") setStatus("solid tile: "+e.message,true); })
       .finally(()=>{ L.stilesBusy--; requestDraw(); pumpSolidTiles(L); });
   } }
@@ -2283,7 +2297,7 @@ async function showLayer(ds,key,cb){
           // solid surfaces are the default view of a label layer (&mode=voxel opens the voxels); until the
           // server has them ready the voxels are shown, and the view switches over when they arrive —
           // unless the visitor has picked a view in the meantime
-          L.envelope=params.get("envelope")==="1";
+          L.envelope=false;                 // the desktop app has no tissue envelope
           renderLayers();
           if(L.canSolid && params.get("mode")!=="voxel")
             ensureSolid(L).then(()=>{ if(!L.solid||L.picked||L.mode==="solid"||!S.layers.includes(L)) return;
@@ -2305,7 +2319,8 @@ async function showLayer(ds,key,cb){
 }
 async function selectDataset(ds,show){
   S.gen=(S.gen||0)+1; pending.clear(); S.hiddenNames.clear(); dropGenes(); dropLayers();
-  if(!params.get("view")) S.viewPicked=false;
+  // a dataset opens from above, however the one before it was left turned (SSAF-T_web's viewer does the same)
+  if(!params.get("view")){ S.viewPicked=false; S.cam.az=0; S.cam.el=Math.PI/2-0.002; S.vel.az=S.vel.el=0; }
   S.z2d=null; S.zPicked=false;                    // a new dataset opens at its own middle plane
   $("#dsInfo").innerHTML=(ds.info||[]).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   const want=show?new Set(show.split(",")):null, box=$("#dsShow"); box.innerHTML="";
