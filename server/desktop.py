@@ -99,7 +99,7 @@ def map_z(g, element, upu):
     return z0, z0 + abs(dz) * Z
 
 
-def image_level(node, upu):
+def image_level(node, upu, budget=None):
     """(level path, µm per pixel) of an image: the finest level of at most IMAGE_BUDGET pixels.
 
     The image is resampled onto the µm lattice in one piece (app.rgb_tiles_for), so its size is memory.
@@ -113,9 +113,47 @@ def image_level(node, upu):
         M = app._element_matrix(node, lv)
         um = float(np.sqrt(abs(np.linalg.det(M[:2, :2])))) * upu
         best = (lv, round(um, 9))               # exact: rgb_tiles_for can then copy pixels, not resample
-        if shp.get("y", 1) * shp.get("x", 1) <= IMAGE_BUDGET:
+        if shp.get("y", 1) * shp.get("x", 1) <= (budget or IMAGE_BUDGET):
             return best
     return best
+
+
+# A store's label elements are all offered, as the site's viewer offers a folder a visitor opens
+# (viewer/local/layers.js): by their own names, and with nothing in their metadata to say which is the
+# cell-type map and which are cell ids, by their values -- a map's values index the store's palette, cell
+# ids run far past it.
+def _shown(name):
+    """An element's name for the panel: SpatialData names have no spaces, so `_` stands for one."""
+    return name.replace("_", " ")
+
+
+def _label_peek(node):
+    """The largest value of a label element's middle plane, at its coarsest level read at most 1024
+    pixels a side: enough to tell a map's class ids from cell ids."""
+    lv = app._levels(node)[-1]
+    a = node[lv]
+    ax = app._axes(app._multiscale(node)) or (["z", "y", "x"] if len(a.shape) == 3 else ["y", "x"])
+    sel = []
+    for i, n in enumerate(ax):
+        if n == "z":
+            sel.append(a.shape[i] // 2)
+        elif n in ("y", "x"):
+            sel.append(slice(None, None, max(1, -(-a.shape[i] // 1024))))
+        else:
+            sel.append(0)
+    return int(np.asarray(a[tuple(sel)]).max(initial=0))
+
+
+def _region_table(g, tables, element):
+    """The table that annotates a label element (its `region`) with a cell type per cell, or None."""
+    for t in tables:
+        tb = g["tables"][t]
+        region = dict(tb.attrs).get("region")
+        if element not in (region if isinstance(region, list) else [region]):
+            continue
+        if "obs" in tb and "cellman_annotation" in tb["obs"] and dict(tb.attrs).get("instance_key"):
+            return t
+    return None
 
 
 def _stem(p):
@@ -184,7 +222,18 @@ def manifest_for(store):
             ("images", "labels", "shapes", "points", "tables")}
     st = str(store)
     platform = guess_platform(keys["images"], keys["shapes"], keys["points"])
-    cmap = "ssaft_celltype_map" if "ssaft_celltype_map" in keys["labels"] else None
+    peek = {}
+    for name in keys["labels"]:
+        try:
+            peek[name] = _label_peek(g["labels"][name])
+        except Exception:                                        # noqa: BLE001
+            traceback.print_exc()
+    # the map shown at the start: SSAF-T's own by its name, otherwise (a store whose elements were renamed)
+    # the first label element whose values fit the store's palette, as the site's viewer picks it
+    pal = (app.palette_from_tables(st, 0)[0] or []) if keys["tables"] else []
+    cmap = "ssaft_celltype_map" if "ssaft_celltype_map" in keys["labels"] else next(
+        (n for n in keys["labels"] if peek.get(n) and peek[n] <= (len(pal) if pal else 254)
+         and not _region_table(g, keys["tables"], n)), None)
     upu_given = None if keys["points"] else bins_um_per_unit(g, store, keys["shapes"])
     upu = upu_given or app._um_per_unit(g, {})
     bottom, top = map_z(g, cmap, upu) if cmap else (0.0, 1.0)
@@ -239,8 +288,27 @@ def manifest_for(store):
         layers["nuclei" if i == 0 else f"image_{name}"] = spec
 
     if cmap:
-        layers["celltype_map"] = dict(label="SSAF-T cell-type map", type="sdata_labels", store=st, element=cmap,
+        layers["celltype_map"] = dict(label="SSAF-T cell-type map" if cmap == "ssaft_celltype_map" else _shown(cmap),
+                                      type="sdata_labels", store=st, element=cmap,
                                       solid=dict(sigma_xy_um=1.0, sigma_z_um=1.0))
+    # every other label element, off until ticked: cell ids drawn by their cell's type through the table that
+    # annotates them, a class map like the cell-type map, or cell ids no table names, in repeating colours
+    # (label_volume) and with no solid view (a surface per colour of 255 is more than a desktop can make)
+    for name in keys["labels"]:
+        if name == cmap or (three_d and name == "ssaft_cell_labels_3d") or name not in peek:
+            continue
+        node = g["labels"][name]
+        spec = dict(label=_shown(name), type="sdata_labels", store=st, element=name, show=False, group=name)
+        tb = _region_table(g, keys["tables"], name)
+        if tb:
+            spec.update(table=tb, solid=dict(sigma_xy_um=1.5, sigma_z_um=1.0))
+        elif peek[name] <= 254:
+            spec.update(solid=dict(sigma_xy_um=1.0, sigma_z_um=1.0))
+        else:
+            spec.update(solid=False)
+            if "z" not in (app._axes(app._multiscale(node)) or []):   # a flat segmentation at full
+                spec["level"] = image_level(node, upu, 100e6)[0]   # resolution is a 4 GB int32 read
+        layers[f"labels_{name}"] = spec
 
     cells = dict(label="SSAF-T cell segmentation", store=st, show=False)
     grp = dict(group="ssaft_cells") if three_d else {}
@@ -271,7 +339,9 @@ def manifest_for(store):
         else:
             label, color = f"Outlines: {name}", "#63d471"
         layers[f"shapes_{name}"] = dict(label=label, type="sdata_shapes", store=st, element=name,
-                                        z_um=top + 0.05, color=color, show=False)
+                                        z_um=top + 0.05, color=color, show=False,
+                                        # outlines named as a label element are its outlines: one entry
+                                        **(dict(group=name) if f"labels_{name}" in layers else {}))
 
     if upu_given:                                # every layer read in that one frame
         for v in layers.values():
@@ -714,6 +784,23 @@ def _read_blocks(a, fn, dtype):
     return out
 
 
+def _read_rows(a, fn, dtype):
+    """_read_blocks for a flat (y, x) label element: a (1, y, x) volume, read a band of rows at a time."""
+    out = _big((1,) + tuple(a.shape), dtype)
+    step = int(a.chunks[0]) if len(getattr(a, "chunks", ())) == 2 else 1024
+    for y0 in range(0, a.shape[0], step):
+        out[0, y0:y0 + step] = fn(np.asarray(a[y0:y0 + step]))
+    return out
+
+
+def _wrap_colour(k):
+    """The k-th of 255 colours for cell ids no table names: hues a golden angle apart, so neighbouring ids
+    (touching cells, often) differ."""
+    import colorsys
+    r, g, b = colorsys.hsv_to_rgb((k * 0.381966) % 1.0, 0.55 + 0.35 * (k % 3) / 2, 0.95 - 0.25 * (k % 2))
+    return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
+
+
 def label_volume(spec):
     """app.label_volume, reading a SpatialData label map plane by plane; the same volume."""
     if spec["type"] != "sdata_labels":
@@ -722,23 +809,27 @@ def label_volume(spec):
     node = g["labels"][spec["element"]]
     lv = spec.get("level") or app._levels(node)[0]
     a = node[lv]
-    if len(a.shape) != 3:
+    if len(a.shape) not in (2, 3):
         return _label_volume(spec)
+    read = _read_blocks if len(a.shape) == 3 else _read_rows
+    top = [0]
     if spec.get("table"):
         # app sizes the lookup to the largest id in the map; an id past the table's cells maps to 0 either way
         lut = app._instance_lut(g, spec, 0)
         last = len(lut) - 1
-        arr = _read_blocks(a, lambda s: np.where(s > last, 0, lut[np.clip(s, 0, last)]), np.uint8)
+        arr = read(a, lambda s: np.where(s > last, 0, lut[np.clip(s, 0, last)]), np.uint8)
     else:
-        top = [0]
-
+        # values past a byte are cell ids no table names: drawn in repeating colours, as the site's viewer
+        # draws them (local/layers.js), so that at least the cells read as separate; a map's are kept as they are
         def to8(s):
             top[0] = max(top[0], int(s.max(initial=0)))
-            return np.where(s > 0, s, 0)
-        arr = _read_blocks(a, to8, np.uint8)
-        if top[0] > 254:
-            raise ValueError(f"label value {top[0]} does not fit a uint8 label texture")
-    names, colors = app._palette(spec)
+            return np.where(s > 0, (s - 1) % 255 + 1, 0)
+        arr = read(a, to8, np.uint8)
+    if top[0] > 254:
+        n = _shown(spec["element"])
+        names, colors = [n] * 255, [_wrap_colour(k) for k in range(255)]
+    else:
+        names, colors = app._palette(spec)
     vol, vox, org = app._align(arr, app._element_matrix(node, lv), app._um_per_unit(g, spec), spec, resample=True)
     return app._z_trim(dict(vol=vol, names=names or [], colors=colors or [], voxel_um=vox, origin_um=org,
                             name=f"labels/{spec['element']}"), "vol", spec.get("z_trim"))

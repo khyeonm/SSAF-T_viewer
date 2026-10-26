@@ -1738,7 +1738,10 @@ function classList(L){
     applyHidden(); };
   box.appendChild(bar); syncClsBar(bar);
   const tot=m.classes.reduce((s,c)=>s+c.voxels,0)||1;
-  for(const c of [...m.classes].sort((a,b)=>b.voxels-a.voxels)){
+  // one row per name: cell ids no table names come as 255 colours of one name (the app's label_volume)
+  const byName=new Map();
+  for(const c of m.classes){ const o=byName.get(c.name); if(o) o.voxels+=c.voxels; else byName.set(c.name,{...c}); }
+  for(const c of [...byName.values()].sort((a,b)=>b.voxels-a.voxels)){
     const row=document.createElement("div"); row.className="cls"+(S.hiddenNames.has(c.name)?" off":"");
     row.dataset.name=c.name; row.title="Click to show or hide this cell type in every layer";
     row.innerHTML=`<input type="color" class="swc" value="${hex6(clsColor(c))}" title="Click to choose this cell type's colour"><span>${esc(c.name)}</span><span class="pct">${(100*c.voxels/tot).toFixed(1)}%</span>`;
