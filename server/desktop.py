@@ -239,7 +239,7 @@ def manifest_for(store):
         layers["nuclei" if i == 0 else f"image_{name}"] = spec
 
     if cmap:
-        layers["celltype_map"] = dict(label="Cell-type map", type="sdata_labels", store=st, element=cmap,
+        layers["celltype_map"] = dict(label="SSAF-T cell-type map", type="sdata_labels", store=st, element=cmap,
                                       solid=dict(sigma_xy_um=1.0, sigma_z_um=1.0))
 
     cells = dict(label="SSAF-T cell segmentation", store=st, show=False)
