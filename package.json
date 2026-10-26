@@ -76,7 +76,7 @@
       "category": "Science",
       "icon": "build-resources/icon.png"
     },
-    "artifactName": "SSAF-T-Viewer-${version}-${os}-${arch}.${ext}",
+    "artifactName": "SSAF-T-Viewer-${os}-${arch}.${ext}",
     "dmg": {
       "title": "SSAF-T Viewer ${version}",
       "icon": "build-resources/icon-mac.png",
